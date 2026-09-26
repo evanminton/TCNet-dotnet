@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             xmlns:tc="clr-namespace:TCNet;assembly=TCNet"
+             x:Class="TCNet.Maui.Views.MixerPage"
+             x:DataType="vm:MixerViewModel"
+             Title="Mixer">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="12" RowSpacing="10">
+        <Grid ColumnDefinitions="*,Auto">
+            <Label Text="{Binding Header}" Style="{StaticResource Heading}" VerticalOptions="Center" />
+            <Button Grid.Column="1" Text="Request mixer data" Command="{Binding RequestCommand}" />
+        </Grid>
+        <Border Grid.Row="1" Style="{StaticResource Card}">
+            <VerticalStackLayout Spacing="6">
+                <Grid ColumnDefinitions="90,*" ColumnSpacing="8">
+                    <Label Text="Master" />
+                    <ProgressBar Grid.Column="1" Progress="{Binding Master}" />
+                </Grid>
+                <Grid ColumnDefinitions="90,*" ColumnSpacing="8">
+                    <Label Text="Crossfader" />
+                    <ProgressBar Grid.Column="1" Progress="{Binding Crossfader}" />
+                </Grid>
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Channels}" Spacing="4">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:MixerChannelRow">
+                            <Grid ColumnDefinitions="90,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8">
+                                <Label Text="{Binding Name}" FontAttributes="Bold" />
+                                <ProgressBar Grid.Column="1" Progress="{Binding Fader}" />
+                                <ProgressBar Grid.Column="2" Progress="{Binding Level}" ProgressColor="{StaticResource OnAir}" />
+                                <Label Grid.Row="1" Grid.ColumnSpan="3" Text="{Binding Info}" Style="{StaticResource Caption}" />
+                            </Grid>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+                <Label Text="Bars: fader level · audio level" Style="{StaticResource Caption}" />
+            </VerticalStackLayout>
+        </Border>
+        <CollectionView Grid.Row="2" ItemsSource="{Binding Fields}" SelectionMode="None">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="tc:TCNetField">
+                    <Grid ColumnDefinitions="50,260,80,*" ColumnSpacing="8" Padding="0,1">
+                        <Label Text="{Binding Offset}" Style="{StaticResource Caption}" />
+                        <Label Grid.Column="1" Text="{Binding Name}" />
+                        <Label Grid.Column="2" Text="{Binding Value}" Style="{StaticResource Mono}" />
+                        <Label Grid.Column="3" Text="{Binding Meaning}" Style="{StaticResource Caption}" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

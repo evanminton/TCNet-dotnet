@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             xmlns:svc="clr-namespace:TCNet.Maui.Services"
+             xmlns:draw="clr-namespace:TCNet.Maui.Drawing"
+             x:Class="TCNet.Maui.Views.LivePage"
+             x:DataType="vm:LiveViewModel"
+             Title="Live">
+    <Grid RowDefinitions="Auto,*" Padding="12" RowSpacing="8">
+        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+            <Label Text="Source" VerticalOptions="Center" />
+            <Picker Grid.Column="1" ItemsSource="{Binding Sources}" SelectedItem="{Binding Source}"
+                    />
+            <Label Grid.Column="2" Text="{Binding Header}" Style="{StaticResource Caption}" VerticalOptions="Center" />
+        </Grid>
+
+        <CollectionView Grid.Row="1" ItemsSource="{Binding Layers}" SelectionMode="None">
+            <CollectionView.ItemsLayout>
+                <GridItemsLayout Orientation="Vertical" Span="{OnIdiom Phone=1, Default=2}" HorizontalItemSpacing="8" VerticalItemSpacing="8" />
+            </CollectionView.ItemsLayout>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="vm:LayerViewModel">
+                    <Border Style="{StaticResource Card}">
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="4">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <Label Text="{Binding Name}" Style="{StaticResource Heading}" />
+                                <Label Grid.Column="1" Text="{Binding OnAirText}" TextColor="{StaticResource OnAir}" IsVisible="{Binding IsOnAir}" FontAttributes="Bold" VerticalOptions="Center" />
+                                <Border Grid.Column="2" Style="{StaticResource Badge}" BackgroundColor="{Binding StateColor}">
+                                    <Label Text="{Binding State}" TextColor="White" FontSize="12" FontAttributes="Bold" />
+                                </Border>
+                            </Grid>
+                            <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+                                <Label Text="{Binding Time}" FontSize="30" FontFamily="{OnPlatform WinUI=Consolas, Android=monospace, iOS=Menlo, MacCatalyst=Menlo}" />
+                                <VerticalStackLayout Grid.Column="1" HorizontalOptions="End">
+                                    <Label Text="{Binding Remaining}" Style="{StaticResource Mono}" HorizontalTextAlignment="End" />
+                                    <Label Text="{Binding Total}" Style="{StaticResource Caption}" HorizontalTextAlignment="End" />
+                                </VerticalStackLayout>
+                            </Grid>
+                            <draw:WaveformView Grid.Row="2" Waveform="{Binding Waveform}" Progress="{Binding Progress}" HeightRequest="44" />
+                            <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                <Label Text="{Binding Timecode}" Style="{StaticResource Mono}" FontSize="16" />
+                                <Label Grid.Column="1" Text="{Binding TimecodeInfo}" Style="{StaticResource Caption}" VerticalOptions="Center" />
+                                <Label Grid.Column="2" Text="{Binding Beat}" FontSize="16" TextColor="{StaticResource PrimaryDark}" />
+                            </Grid>
+                            <Label Grid.Row="4" LineBreakMode="TailTruncation">
+                                <Label.FormattedText>
+                                    <FormattedString>
+                                        <Span Text="{Binding Title}" FontAttributes="Bold" />
+                                        <Span Text="  " />
+                                        <Span Text="{Binding Artist}" />
+                                    </FormattedString>
+                                </Label.FormattedText>
+                            </Label>
+                            <Grid Grid.Row="5" ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                <Label Text="{Binding Bpm}" FontAttributes="Bold" />
+                                <Label Grid.Column="1" Text="{Binding Track}" Style="{StaticResource Caption}" />
+                            </Grid>
+                            <VerticalStackLayout Grid.Row="6" Spacing="2">
+                                <Label Text="{Binding Extra}" Style="{StaticResource Caption}" />
+                                <ProgressBar Progress="{Binding OnAir}" ProgressColor="{StaticResource OnAir}" HeightRequest="4" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

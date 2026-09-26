@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             xmlns:tc="clr-namespace:TCNet;assembly=TCNet"
+             x:Class="TCNet.Maui.Views.SendPage"
+             x:DataType="vm:SendViewModel"
+             Title="Send">
+    <ScrollView>
+        <VerticalStackLayout Padding="12" Spacing="10">
+            <Label Text="Build any TCNet packet, edit its bytes, decode and send it." Style="{StaticResource Caption}" />
+            <FlexLayout Wrap="Wrap">
+                <Button Text="Send Opt-IN now" Command="{Binding OptInCommand}" Margin="0,0,8,8" />
+                <Button Text="Send Status now" Command="{Binding StatusCommand}" Margin="0,0,8,8" />
+                <Button Text="Publish Time now" Command="{Binding TimeCommand}" Margin="0,0,8,8" />
+            </FlexLayout>
+            <Picker x:Name="TypePicker" Title="Packet type" ItemsSource="{Binding PacketTypes}" SelectedItem="{Binding Packet}" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <Picker Title="Target" ItemsSource="{Binding Targets}" SelectedItem="{Binding SelectedTarget}" />
+                <Button Grid.Column="1" Text="Refresh targets" Command="{Binding RefreshTargetsCommand}" />
+            </Grid>
+            <Entry Text="{Binding Target}" Placeholder="broadcast:60000 · node:KEY · ip:port" />
+            <Editor Text="{Binding Hex}" AutoSize="TextChanges" MinimumHeightRequest="100"
+                    FontFamily="{OnPlatform WinUI=Consolas, Android=monospace, iOS=Menlo, MacCatalyst=Menlo}" FontSize="12" />
+            <FlexLayout Wrap="Wrap">
+                <Button Text="Rebuild" Command="{Binding BuildCommand}" Margin="0,0,8,8" />
+                <Button Text="Decode" Command="{Binding DecodeCommand}" Margin="0,0,8,8" />
+                <Button Text="Send" Command="{Binding SendCommand}" Margin="0,0,8,8" />
+            </FlexLayout>
+            <Label Text="{Binding Result}" Style="{StaticResource Mono}" />
+            <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="tc:TCNetField">
+                        <Grid ColumnDefinitions="70,200,*,*" ColumnSpacing="8">
+                            <Label Text="{Binding Offset}" Style="{StaticResource Caption}" />
+                            <Label Grid.Column="1" Text="{Binding Name}" />
+                            <Label Grid.Column="2" Text="{Binding Value}" Style="{StaticResource Mono}" />
+                            <Label Grid.Column="3" Text="{Binding Meaning}" Style="{StaticResource Caption}" />
+                        </Grid>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>
