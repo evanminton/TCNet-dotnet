@@ -46,9 +46,9 @@ public sealed class SettingsViewModel : ObservableObject
         foreach (var i in TCNetNetwork.GetInterfaces()) Interfaces.Add(new InterfaceChoice(i.ToString(), i.Address.ToString()));
         _interface = Interfaces.FirstOrDefault(i => i.Address == s.InterfaceAddress) ?? Interfaces[0];
 
-        ApplyCommand = new Command(async () => await Apply());
-        StartCommand = new Command(async () => await _service.StartAsync());
-        StopCommand = new Command(async () => await _service.StopAsync());
+        ApplyCommand = new Command(async () => await Run("Apply", Apply));
+        StartCommand = new Command(async () => await Run("Start", _service.StartAsync));
+        StopCommand = new Command(async () => await Run("Stop", _service.StopAsync));
     }
 
     public TCNetService Service => _service;
@@ -79,6 +79,12 @@ public sealed class SettingsViewModel : ObservableObject
     public ICommand ApplyCommand { get; }
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
+
+    private async Task Run(string action, Func<Task> body)
+    {
+        try { await body(); }
+        catch (Exception ex) { _service.ReportError(action, ex); }
+    }
 
     private async Task Apply()
     {

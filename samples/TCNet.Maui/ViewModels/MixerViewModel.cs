@@ -21,9 +21,13 @@ public sealed class MixerViewModel : ObservableObject
         _service = service;
         RequestCommand = new Command(async () =>
         {
-            if (_service.Node is not { } local) return;
-            foreach (var n in local.Nodes.Where(n => n.IsMasterOrRepeater && n.EndPoint is not null))
-                await local.RequestMixerAsync(n);
+            try
+            {
+                if (_service.Node is not { } local) return;
+                foreach (var n in local.Nodes.Where(n => n.IsMasterOrRepeater && n.EndPoint is not null))
+                    await local.RequestMixerAsync(n);
+            }
+            catch (Exception ex) { Header = $"Mixer request failed: {ex.Message}"; }
         });
     }
 

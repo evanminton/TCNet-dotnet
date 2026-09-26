@@ -111,7 +111,12 @@ public static class Wire
     {
         var clean = new StringBuilder(hex.Length);
         var s = hex.Replace("0x", "", StringComparison.OrdinalIgnoreCase);
-        foreach (char c in s) if (Uri.IsHexDigit(c)) clean.Append(c);
+        foreach (char c in s)
+        {
+            if (Uri.IsHexDigit(c)) clean.Append(c);
+            else if (!char.IsWhiteSpace(c) && c is not (',' or ':' or '-'))
+                throw new FormatException($"'{c}' is not a hex digit.");
+        }
         if (clean.Length % 2 != 0) throw new FormatException("Hex string has an odd number of digits.");
         return Convert.FromHexString(clean.ToString());
     }

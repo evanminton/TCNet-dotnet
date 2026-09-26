@@ -137,11 +137,21 @@ public sealed class NodeDetailViewModel : ObservableObject, IQueryAttributable
         Replace(Layers, layers);
     }
 
-    private static void Replace<T>(ObservableCollection<T> target, IList<T> items)
+    /// <summary>
+    /// Updates <paramref name="target"/> in place: rows are immutable records, so only rows whose value changed are
+    /// replaced by index (one small Replace notification each) instead of clearing and rebuilding every row.
+    /// </summary>
+    private static void Replace(ObservableCollection<InfoRow> target, IList<InfoRow> items)
     {
-        if (target.SequenceEqual(items)) return;
-        target.Clear();
-        foreach (var i in items) target.Add(i);
+        bool sameShape = target.Count == items.Count && target.Select(r => r.Name).SequenceEqual(items.Select(r => r.Name));
+        if (!sameShape)
+        {
+            target.Clear();
+            foreach (var i in items) target.Add(i);
+            return;
+        }
+        for (int i = 0; i < items.Count; i++)
+            if (target[i] != items[i]) target[i] = items[i];
     }
 
     private async Task Run(Func<TCNetNode, TCNetRemoteNode, Task> action)

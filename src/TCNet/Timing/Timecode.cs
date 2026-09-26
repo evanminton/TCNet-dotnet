@@ -22,7 +22,8 @@ public readonly record struct Timecode(byte Hours, byte Minutes, byte Seconds, b
     public static Timecode FromMilliseconds(uint ms, SmpteMode mode)
     {
         int fps = FramesPerSecond(mode);
-        long totalFrames = (long)Math.Floor(ms / 1000.0 * FrameRate(mode));
+        var (num, den) = Rate(mode);
+        long totalFrames = ms * num / (1000L * den);
         long frames = totalFrames % fps;
         long totalSeconds = totalFrames / fps;
         return new Timecode(
@@ -32,13 +33,21 @@ public readonly record struct Timecode(byte Hours, byte Minutes, byte Seconds, b
             (byte)frames);
     }
 
-    /// <summary>Converts timecode back to milliseconds.</summary>
+    /// <summary>
+    /// Converts timecode back to milliseconds: the first whole millisecond inside the frame, so
+    /// <see cref="FromMilliseconds"/> returns the same timecode.
+    /// </summary>
     public uint ToMilliseconds(SmpteMode mode)
     {
         int fps = FramesPerSecond(mode);
+        var (num, den) = Rate(mode);
         long totalFrames = ((Hours * 60L + Minutes) * 60 + Seconds) * fps + Frames;
-        return (uint)Math.Round(totalFrames * 1000.0 / FrameRate(mode));
+        return (uint)((totalFrames * 1000L * den + num - 1) / num);
     }
+
+    /// <summary>Exact frame rate as a fraction (integer maths avoids off-by-one frames).</summary>
+    private static (long Num, long Den) Rate(SmpteMode mode) =>
+        mode == SmpteMode.Fps29_97 ? (30000, 1001) : (FramesPerSecond(mode), 1);
 
     /// <summary>Parses "HH:MM:SS:FF" (':' ';' or '.' separators).</summary>
     public static Timecode Parse(string s)

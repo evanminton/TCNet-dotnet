@@ -34,7 +34,9 @@ public class AssemblyTests
         foreach (var p in packets) p.PacketNumber++;
         var asm = new TCNetChunkAssembler();
         Assert.Null(asm.Add(packets[0]));
-        Assert.NotNull(asm.Add(packets[1]));
+        var done = asm.Add(packets[1]);
+        Assert.NotNull(done);
+        Assert.Equal(new byte[5000], done!.Data);
     }
 
     [Fact]
@@ -119,7 +121,37 @@ public class TimingTests
     [Fact]
     public void Election_PicksHighestUptimeAuto()
     {
-        Assert.True(TCNetMasterElection.ShouldPromote(100, 0, []));
+        var now = DateTime.UtcNow;
+        TCNetRemoteNode Node(ushort id, NodeType type, ushort uptime) =>
+            new(IPAddress.Loopback, id) { NodeType = type, Uptime = uptime, LastOptIn = now, NodeName = $"N{id}" };
+
+        Assert.True(TCNetMasterElection.ShouldPromote(100, 5, "ME", [], now));
+        Assert.True(TCNetMasterElection.ShouldPromote(100, 5, "ME", [Node(1, NodeType.Auto, 50)], now));
+        Assert.False(TCNetMasterElection.ShouldPromote(100, 5, "ME", [Node(1, NodeType.Auto, 200)], now));
+        Assert.False(TCNetMasterElection.ShouldPromote(100, 5, "ME", [Node(1, NodeType.Master, 10)], now));
+        // Within tolerance: lower Node ID wins, and both sides agree.
+        Assert.False(TCNetMasterElection.ShouldPromote(100, 5, "ME", [Node(1, NodeType.Auto, 101)], now));
+        Assert.True(TCNetMasterElection.ShouldPromote(101, 1, "N1", [Node(5, NodeType.Auto, 100)], now));
+        Assert.Equal(1, TCNetMasterElection.ChooseMaster([Node(5, NodeType.Auto, 100), Node(1, NodeType.Auto, 101)], now)!.NodeId);
+        // Two elected masters: only the lower-ranked one steps back.
+        Assert.True(TCNetMasterElection.ShouldDemote(100, 5, "ME", Node(1, NodeType.Master, 101), now));
+        Assert.False(TCNetMasterElection.ShouldDemote(101, 1, "N1", Node(5, NodeType.Master, 100), now));
+    }
+
+    [Theory]
+    [InlineData(SmpteMode.Fps24)]
+    [InlineData(SmpteMode.Fps25)]
+    [InlineData(SmpteMode.Fps29_97)]
+    [InlineData(SmpteMode.Fps30)]
+    public void Timecode_RoundTripsEveryFrame(SmpteMode mode)
+    {
+        int fps = Timecode.FramesPerSecond(mode);
+        for (int s = 0; s < 120; s++)
+            for (int f = 0; f < fps; f++)
+            {
+                var tc = new Timecode(0, (byte)(s / 60), (byte)(s % 60), (byte)f);
+                Assert.Equal(tc, Timecode.FromMilliseconds(tc.ToMilliseconds(mode), mode));
+            }
     }
 
     [Fact]
@@ -185,6 +217,9 @@ public class TextTests
         var bytes = Wire.ParseHex("0x54 43 4E");
         Assert.Equal("TCN"u8.ToArray(), bytes);
         Assert.Contains("TCN", Wire.HexDump(bytes));
+        Assert.Equal("TCN"u8.ToArray(), Wire.ParseHex("54:43-4e"));
+        Assert.Throws<FormatException>(() => Wire.ParseHex("zz"));
+        Assert.Throws<FormatException>(() => Wire.ParseHex("543"));
     }
 }
 

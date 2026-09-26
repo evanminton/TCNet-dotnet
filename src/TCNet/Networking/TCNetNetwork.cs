@@ -59,24 +59,49 @@ public static class TCNetNetwork
 
 /// <summary>
 /// Master election from the Opt-OUT tip: when a master disconnects, the node running as Auto (type 1)
-/// with the highest uptime (then timestamp) becomes the new master.
+/// with the highest uptime becomes the new master. Uptimes within <see cref="UptimeTolerance"/> of each
+/// other count as equal (remote uptimes are up to one Opt-IN interval old); ties go to the lower Node ID,
+/// then the lower node name, so every node reaches the same verdict.
 /// </summary>
 public static class TCNetMasterElection
 {
-    /// <summary>The Auto node that should become master, or null.</summary>
-    public static TCNetRemoteNode? ChooseMaster(IEnumerable<TCNetRemoteNode> nodes) =>
-        nodes.Where(n => n.NodeType == NodeType.Auto)
-             .OrderByDescending(n => Score(n.Uptime, n.LastTimestamp))
-             .FirstOrDefault();
+    /// <summary>Uptime difference (seconds) treated as a tie.</summary>
+    public const int UptimeTolerance = 2;
 
-    /// <summary>True if no master is present and the local Auto node outranks every Auto candidate.</summary>
-    public static bool ShouldPromote(ushort selfUptime, uint selfTimestamp, IEnumerable<TCNetRemoteNode> nodes)
+    /// <summary>The Auto node that should become master, or null.</summary>
+    public static TCNetRemoteNode? ChooseMaster(IEnumerable<TCNetRemoteNode> nodes, DateTime? now = null)
     {
-        var all = nodes.ToList();
-        if (all.Any(n => n.NodeType == NodeType.Master)) return false;
-        long self = Score(selfUptime, selfTimestamp);
-        return all.Where(n => n.NodeType == NodeType.Auto).All(n => Score(n.Uptime, n.LastTimestamp) < self);
+        var t = now ?? DateTime.UtcNow;
+        TCNetRemoteNode? best = null;
+        foreach (var n in nodes.Where(n => n.NodeType == NodeType.Auto))
+            if (best is null || Outranks(EstimatedUptime(n, t), n.NodeId, n.NodeName, EstimatedUptime(best, t), best.NodeId, best.NodeName))
+                best = n;
+        return best;
     }
 
-    private static long Score(ushort uptime, uint timestamp) => uptime * 1_000_000L + timestamp;
+    /// <summary>True if no master is present and the local Auto node outranks every Auto candidate.</summary>
+    public static bool ShouldPromote(ushort selfUptime, ushort selfNodeId, string selfName, IEnumerable<TCNetRemoteNode> nodes, DateTime? now = null)
+    {
+        var t = now ?? DateTime.UtcNow;
+        var all = nodes.ToList();
+        if (all.Any(n => n.NodeType == NodeType.Master)) return false;
+        return all.Where(n => n.NodeType == NodeType.Auto)
+                  .All(n => Outranks(selfUptime, selfNodeId, selfName, EstimatedUptime(n, t), n.NodeId, n.NodeName));
+    }
+
+    /// <summary>True if a node that became master by election should step back because <paramref name="other"/> outranks it.</summary>
+    public static bool ShouldDemote(ushort selfUptime, ushort selfNodeId, string selfName, TCNetRemoteNode other, DateTime? now = null) =>
+        other.NodeType == NodeType.Master
+        && !Outranks(selfUptime, selfNodeId, selfName, EstimatedUptime(other, now ?? DateTime.UtcNow), other.NodeId, other.NodeName);
+
+    /// <summary>Remote uptime advanced by the time since its last Opt-IN.</summary>
+    private static long EstimatedUptime(TCNetRemoteNode n, DateTime now) =>
+        n.Uptime + (n.LastOptIn is { } seen && now > seen ? (long)(now - seen).TotalSeconds : 0);
+
+    private static bool Outranks(long uptimeA, ushort idA, string nameA, long uptimeB, ushort idB, string nameB)
+    {
+        if (Math.Abs(uptimeA - uptimeB) > UptimeTolerance) return uptimeA > uptimeB;
+        if (idA != idB) return idA < idB;
+        return string.CompareOrdinal(nameA, nameB) < 0;
+    }
 }

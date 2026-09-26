@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using TCNet;
 using TCNet.Networking;
@@ -13,7 +14,8 @@ try
 {
     return await cli.RunAsync();
 }
-catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException or TimeoutException)
+catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException or TimeoutException
+                               or OverflowException or IOException or UnauthorizedAccessException or SocketException)
 {
     Console.Error.WriteLine($"error: {ex.Message}");
     return 2;
@@ -118,7 +120,12 @@ internal sealed class Cli
         if (Opt("bcast") is { } b) s.BroadcastAddress = IPAddress.Parse(b);
         var node = new TCNetNode(s);
         node.Warning += (_, w) => Console.Error.WriteLine($"! {w}");
-        node.Start();
+        try { node.Start(); }
+        catch
+        {
+            node.Dispose();
+            throw;
+        }
         Console.Error.WriteLine($"# node {s.NodeName}#{s.NodeId} ({node.NodeType}) listening on {node.ListenerPort}, broadcast ports [{string.Join(",", node.BoundBroadcastPorts)}], sending to {node.BroadcastAddress}");
         return node;
     }
@@ -306,11 +313,11 @@ internal sealed class Cli
 
     private async Task<int> KeyAsync()
     {
+        string key = _positional.Count > 2 ? _positional[2] : Arg(1, "key");
+        if (key.Length == 0) throw new ArgumentException("key must not be empty");
         await using var node = CreateNode();
         TCNetRemoteNode? target = null;
-        string key;
-        if (_positional.Count > 2) { target = await FindNodeAsync(node, _positional[1]); key = _positional[2]; }
-        else key = Arg(1, "key");
+        if (_positional.Count > 2) target = await FindNodeAsync(node, _positional[1]);
         ushort code = key.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? ushort.Parse(key[2..], NumberStyles.HexNumber) : key[0];
         await node.SendKeyAsync(code, target);
         Console.WriteLine($"sent Keyboard Data 0x{code:X4} to {(target?.ToString() ?? "broadcast 60000")}");
@@ -378,13 +385,20 @@ internal sealed class Cli
     private int Layout()
     {
         var q = _positional.Count > 1 ? string.Join(" ", _positional.Skip(1)) : null;
+        int matched = 0;
         foreach (var p in TCNetOptionCatalog.Packets)
         {
-            if (q is not null && !p.Name.Contains(q, StringComparison.OrdinalIgnoreCase) && p.Key != q) continue;
+            if (q is not null && !p.Name.Contains(q, StringComparison.OrdinalIgnoreCase) && p.Key != q && !p.Key.StartsWith(q + "/", StringComparison.Ordinal)) continue;
+            matched++;
             Console.WriteLine($"{p.Name}  (type {p.Key}, {p.Transport}, port {p.Port}, size {p.Size}, {p.Behavior})");
             Console.WriteLine($"  {p.Functionality}");
             foreach (var f in p.Layout) Console.WriteLine($"  {f.Offset,5} {f.Size,4}  {f.Name}");
             Console.WriteLine();
+        }
+        if (matched == 0)
+        {
+            Console.Error.WriteLine($"no packet matches '{q}'");
+            return 1;
         }
         return 0;
     }

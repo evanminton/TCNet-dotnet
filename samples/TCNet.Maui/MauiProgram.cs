@@ -13,7 +13,7 @@ public static class MauiProgram
 
         builder.Services.AddSingleton<AppSettings>();
         builder.Services.AddSingleton<TCNetService>();
-        builder.Services.AddSingleton<AppShell>();
+        builder.Services.AddTransient<AppShell>();
 
         builder.Services.AddSingleton<LiveViewModel>();
         builder.Services.AddSingleton<NodesViewModel>();
@@ -24,14 +24,15 @@ public static class MauiProgram
         builder.Services.AddSingleton<OptionsViewModel>();
         builder.Services.AddSingleton<SettingsViewModel>();
 
-        builder.Services.AddSingleton<LivePage>();
-        builder.Services.AddSingleton<NodesPage>();
+        // Shell and pages are per window (a page can only have one parent); the view models keep the state.
+        builder.Services.AddTransient<LivePage>();
+        builder.Services.AddTransient<NodesPage>();
         builder.Services.AddTransient<NodeDetailPage>();
-        builder.Services.AddSingleton<MixerPage>();
-        builder.Services.AddSingleton<PacketsPage>();
-        builder.Services.AddSingleton<SendPage>();
-        builder.Services.AddSingleton<OptionsPage>();
-        builder.Services.AddSingleton<SettingsPage>();
+        builder.Services.AddTransient<MixerPage>();
+        builder.Services.AddTransient<PacketsPage>();
+        builder.Services.AddTransient<SendPage>();
+        builder.Services.AddTransient<OptionsPage>();
+        builder.Services.AddTransient<SettingsPage>();
 
         return builder.Build();
     }

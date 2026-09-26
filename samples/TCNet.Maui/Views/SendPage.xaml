@@ -16,7 +16,7 @@
             </FlexLayout>
             <Picker x:Name="TypePicker" Title="Packet type" ItemsSource="{Binding PacketTypes}" SelectedItem="{Binding Packet}" />
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <Picker Title="Target" ItemsSource="{Binding Targets}" SelectedItem="{Binding Target}" />
+                <Picker Title="Target" ItemsSource="{Binding Targets}" SelectedItem="{Binding SelectedTarget}" />
                 <Button Grid.Column="1" Text="Refresh targets" Command="{Binding RefreshTargetsCommand}" />
             </Grid>
             <Entry Text="{Binding Target}" Placeholder="broadcast:60000 · node:KEY · ip:port" />

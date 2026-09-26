@@ -58,6 +58,9 @@ public sealed class TCNetPlayback
     private double _lastMs;
     private readonly object _gate = new();
 
+    /// <summary>Lock to hold while changing layers from another thread than the one sending packets.</summary>
+    public object SyncRoot => _gate;
+
     public TCNetPlayback()
     {
         for (int i = 0; i < Layers.Length; i++) Layers[i] = new PlaybackLayer(i) { Name = $"Layer {Text.TCNetText.LayerLabel(i)}" };
@@ -90,6 +93,11 @@ public sealed class TCNetPlayback
 
     /// <summary>Applies control commands like "layer/1/state=6;" or "layer/5/source=1;". Returns OK or not possible.</summary>
     public NotificationCode Apply(ControlPacket control)
+    {
+        lock (_gate) return ApplyCore(control);
+    }
+
+    private NotificationCode ApplyCore(ControlPacket control)
     {
         bool any = false;
         foreach (var c in control.Commands)
@@ -133,18 +141,26 @@ public sealed class TCNetPlayback
     public StatusPacket BuildStatus()
     {
         var p = new StatusPacket { SmpteMode = SmpteMode };
-        foreach (var l in Layers)
+        lock (_gate)
         {
-            var s = p.Layers[l.Index];
-            s.Source = l.Source;
-            s.State = l.State;
-            s.TrackId = l.TrackId;
-            s.Name = l.Name;
+            foreach (var l in Layers)
+            {
+                var s = p.Layers[l.Index];
+                s.Source = l.Source;
+                s.State = l.State;
+                s.TrackId = l.TrackId;
+                s.Name = l.Name;
+            }
         }
         return p;
     }
 
     public MetricsDataPacket BuildMetrics(byte layer)
+    {
+        lock (_gate) return BuildMetricsCore(layer);
+    }
+
+    private MetricsDataPacket BuildMetricsCore(byte layer)
     {
         Advance();
         var l = this[layer];
@@ -167,7 +183,7 @@ public sealed class TCNetPlayback
     public MetadataPacket BuildMetadata(byte layer)
     {
         var l = this[layer];
-        return new MetadataPacket { LayerId = layer, TrackArtist = l.Artist, TrackTitle = l.Title, TrackKey = l.Key, TrackId = l.TrackId };
+        lock (_gate) return new MetadataPacket { LayerId = layer, TrackArtist = l.Artist, TrackTitle = l.Title, TrackKey = l.Key, TrackId = l.TrackId };
     }
 
     /// <summary>Beat grid computed from BPM (downbeat every 4 beats).</summary>
@@ -200,6 +216,12 @@ public sealed class TCNetPlayback
 
     /// <summary>Request handler for <see cref="Networking.TCNetNode.RequestHandler"/>.</summary>
     public IReadOnlyList<TCNetPacket>? HandleRequest(RequestPacket request)
+    {
+        // Called on receive threads while the owner advances and edits layers.
+        lock (_gate) return HandleRequestCore(request);
+    }
+
+    private IReadOnlyList<TCNetPacket>? HandleRequestCore(RequestPacket request)
     {
         byte layer = request.Layer;
         if (request.DataType != DataType.Mixer && (layer < 1 || layer > 8)) return null;

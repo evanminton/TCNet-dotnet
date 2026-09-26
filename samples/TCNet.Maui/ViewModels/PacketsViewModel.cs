@@ -21,13 +21,13 @@ public sealed class PacketsViewModel : ObservableObject
 
     public bool LogTime
     {
-        get => Service.Settings.LogTimePackets;
-        set { Service.Settings.LogTimePackets = value; OnPropertyChanged(); }
+        get => Service.LogTimePackets;
+        set { Service.LogTimePackets = value; OnPropertyChanged(); }
     }
 
     public bool LogSent
     {
-        get => Service.Settings.LogSent;
-        set { Service.Settings.LogSent = value; OnPropertyChanged(); }
+        get => Service.LogSent;
+        set { Service.LogSent = value; OnPropertyChanged(); }
     }
 }

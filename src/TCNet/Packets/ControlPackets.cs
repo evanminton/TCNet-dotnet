@@ -13,7 +13,10 @@ public abstract class TextPayloadPacket : TCNetPacket
 
     public SyncStep Step { get; set; }
 
-    /// <summary>The text payload (ASCII per spec; encoded as UTF-8, which is identical for ASCII).</summary>
+    /// <summary>
+    /// The text payload (ASCII per spec; encoded as UTF-8, which is identical for ASCII). Received bytes that
+    /// are not valid UTF-8 are shown as Latin-1; the raw bytes are kept and sent back unchanged.
+    /// </summary>
     public string Text
     {
         get => _text;
@@ -38,16 +41,18 @@ public abstract class TextPayloadPacket : TCNetPacket
         DeclaredDataSize = Wire.U32(p, 26);
         int available = Math.Max(0, receivedLength - 42);
         int n = DeclaredDataSize == 0 ? available : (int)Math.Min(DeclaredDataSize, (uint)available);
-        var payload = p.Slice(42, n);
+        var raw = p.Slice(42, n);
+        var payload = raw;
         int nul = payload.IndexOf((byte)0);
         if (nul >= 0) payload = payload[..nul];
-        Text = Encoding.UTF8.GetString(payload);
+        _text = System.Text.Unicode.Utf8.IsValid(payload) ? Encoding.UTF8.GetString(payload) : Encoding.Latin1.GetString(payload);
+        _bytes = raw.ToArray();
     }
 
     protected override void DescribeBody(List<TCNetField> f)
     {
         f.Add(new(24, 1, "STEP", ((byte)Step).ToString(), TCNetText.Describe(Step)));
-        f.Add(new(26, 4, "Data Size", _bytes.Length.ToString()));
+        f.Add(new(26, 4, "Data Size", (ReceivedLength > 0 ? DeclaredDataSize : (uint)_bytes.Length).ToString()));
         f.Add(new(42, _bytes.Length, this is ControlPacket ? "Control Path" : "Text Data", Text));
     }
 

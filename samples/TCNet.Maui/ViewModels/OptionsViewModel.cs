@@ -15,7 +15,7 @@ public sealed class ReferenceGroup(string name, IEnumerable<ReferenceRow> rows) 
 public sealed class OptionsViewModel : Services.ObservableObject
 {
     private readonly List<ReferenceGroup> _all;
-    private string _search = "";
+    private string _search = "", _status = "";
 
     public OptionsViewModel()
     {
@@ -33,11 +33,27 @@ public sealed class OptionsViewModel : Services.ObservableObject
             TCNetText.ApplicationCodes.Select(a => new ReferenceRow(a.Vendor, a.Url, a.Code.ToString("X4")))));
         _all.Add(new ReferenceGroup("Spec notes", TCNetOptionCatalog.SpecNotes.Select(n => new ReferenceRow(n.Topic, n.Note))));
         Groups = new ObservableCollection<ReferenceGroup>(_all);
-        CopyCommand = new Command(async () => await Clipboard.Default.SetTextAsync(TCNetOptionCatalog.ToMarkdown()));
+        CopyCommand = new Command(async () =>
+        {
+            try
+            {
+                await Clipboard.Default.SetTextAsync(TCNetOptionCatalog.ToMarkdown());
+                Status = "Copied as Markdown.";
+            }
+            catch (Exception ex) { Status = $"Copy failed: {ex.Message}"; }
+        });
     }
 
     public ObservableCollection<ReferenceGroup> Groups { get; }
     public ICommand CopyCommand { get; }
+
+    public string Status
+    {
+        get => _status;
+        private set { if (SetProperty(ref _status, value)) OnPropertyChanged(nameof(HasStatus)); }
+    }
+
+    public bool HasStatus => _status.Length > 0;
 
     public string Search
     {

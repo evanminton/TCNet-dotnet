@@ -37,6 +37,7 @@ public sealed class TCNetChunkAssembler
         public readonly SortedDictionary<uint, byte[]> Parts = new();
         public uint Total;
         public uint DataSize;
+        public long Bytes;
         public DateTime Updated;
     }
 
@@ -45,6 +46,15 @@ public sealed class TCNetChunkAssembler
 
     /// <summary>Incomplete transfers older than this are dropped.</summary>
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Transfers declaring more packets than this are ignored.</summary>
+    public uint MaxTotalPackets { get; set; } = 4096;
+
+    /// <summary>Transfers declaring or accumulating more bytes than this are dropped.</summary>
+    public long MaxTransferBytes { get; set; } = 16 * 1024 * 1024;
+
+    /// <summary>Maximum number of transfers in progress; the oldest is dropped to make room.</summary>
+    public int MaxPendingTransfers { get; set; } = 256;
 
     /// <summary>Number of transfers in progress.</summary>
     public int PendingCount { get { lock (_gate) return _pending.Count; } }
@@ -72,25 +82,53 @@ public sealed class TCNetChunkAssembler
         }
 
         if (total == 0) total = 1;
+        // Numbering may be 0-based (0..total-1) or 1-based (1..total); anything else is bogus.
+        if (total > MaxTotalPackets || number > total || dataSize > MaxTransferBytes) return null;
+
         var now = DateTime.UtcNow;
         var key = new Key(source?.ToString() ?? "", packet.NodeId, packet.MessageType, dataType, layer);
 
         lock (_gate)
         {
             Prune(now);
-            if (!_pending.TryGetValue(key, out var pend) || pend.Total != total || pend.DataSize != dataSize)
+            bool restart = !_pending.TryGetValue(key, out var pend) || pend.Total != total || pend.DataSize != dataSize;
+            // A repeated packet number with different content means a new transfer has started.
+            if (!restart && pend!.Parts.TryGetValue(number, out var existing) && !existing.AsSpan().SequenceEqual(payload))
+                restart = true;
+            if (restart)
             {
+                if (pend is null) MakeRoom();
                 pend = new Pending { Total = total, DataSize = dataSize };
                 _pending[key] = pend;
             }
+
+            if (pend!.Parts.TryGetValue(number, out var old)) pend.Bytes -= old.Length;
             pend.Parts[number] = payload;
+            pend.Bytes += payload.Length;
             pend.Updated = now;
 
+            if (pend.Bytes > MaxTransferBytes)
+            {
+                _pending.Remove(key);
+                return null;
+            }
+
             if (pend.Parts.Count < total) return null;
+            uint first = pend.Parts.Keys.First(), last = pend.Parts.Keys.Last();
+            if (pend.Parts.Count > total || last - first != total - 1)
+            {
+                // Mixed 0- and 1-based numbering (0..total all present): keep only this packet.
+                if (pend.Parts.Count > total)
+                {
+                    pend.Parts.Clear();
+                    pend.Parts[number] = payload;
+                    pend.Bytes = payload.Length;
+                }
+                return null;
+            }
             _pending.Remove(key);
 
-            int length = pend.Parts.Values.Sum(v => v.Length);
-            var data = new byte[length];
+            var data = new byte[pend.Bytes];
             int offset = 0;
             foreach (var part in pend.Parts.Values)
             {
@@ -121,5 +159,11 @@ public sealed class TCNetChunkAssembler
             if (now - v.Updated > Timeout) (stale ??= []).Add(k);
         if (stale is null) return;
         foreach (var k in stale) _pending.Remove(k);
+    }
+
+    private void MakeRoom()
+    {
+        while (_pending.Count >= Math.Max(1, MaxPendingTransfers))
+            _pending.Remove(_pending.MinBy(kv => kv.Value.Updated).Key);
     }
 }

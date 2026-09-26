@@ -11,6 +11,7 @@ public sealed class SendViewModel : ObservableObject
     private readonly TCNetService _service;
     private PacketInfo? _packet;
     private string _hex = "", _target = "broadcast:60000", _result = "";
+    private string? _selectedTarget = "broadcast:60000";
 
     public SendViewModel(TCNetService service)
     {
@@ -38,7 +39,17 @@ public sealed class SendViewModel : ObservableObject
     }
 
     public string Hex { get => _hex; set => SetProperty(ref _hex, value); }
-    public string Target { get => _target; set => SetProperty(ref _target, value); }
+    public string Target { get => _target; set => SetProperty(ref _target, value ?? ""); }
+
+    /// <summary>Picker selection; copied into <see cref="Target"/> when set (the picker nulls it when its list changes).</summary>
+    public string? SelectedTarget
+    {
+        get => _selectedTarget;
+        set
+        {
+            if (SetProperty(ref _selectedTarget, value) && value is not null) Target = value;
+        }
+    }
     public string Result { get => _result; private set => SetProperty(ref _result, value); }
 
     public ICommand BuildCommand { get; }
@@ -51,12 +62,16 @@ public sealed class SendViewModel : ObservableObject
 
     private void RefreshTargets()
     {
+        var selected = SelectedTarget;
         Targets.Clear();
         Targets.Add("broadcast:60000");
         Targets.Add("broadcast:60001");
         Targets.Add("broadcast:60002");
         foreach (var n in _service.Nodes) Targets.Add($"node:{n.Key}");
         Targets.Add("127.0.0.1:65023");
+        // Restore the picker selection without touching Target (the user may have typed a different one).
+        _selectedTarget = selected is not null && Targets.Contains(selected) ? selected : null;
+        OnPropertyChanged(nameof(SelectedTarget));
     }
 
     /// <summary>Creates a fresh packet of the selected type with this node's header and shows its bytes.</summary>
@@ -88,11 +103,12 @@ public sealed class SendViewModel : ObservableObject
 
     private async Task Send()
     {
-        if (_service.Node is not { } node) { Result = "Node not running."; return; }
-        var ep = _service.ResolveTarget(Target);
-        if (ep is null) { Result = $"Unknown target '{Target}'."; return; }
         try
         {
+            if (_service.Node is not { } node) { Result = "Node not running."; return; }
+            if (string.IsNullOrWhiteSpace(Target)) { Result = "No target selected."; return; }
+            var ep = _service.ResolveTarget(Target);
+            if (ep is null) { Result = $"Unknown target '{Target}'."; return; }
             var bytes = Wire.ParseHex(Hex);
             await node.SendRawAsync(bytes, ep);
             Result = $"Sent {bytes.Length} bytes to {ep}.";

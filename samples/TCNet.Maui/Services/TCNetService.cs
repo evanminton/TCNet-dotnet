@@ -61,16 +61,20 @@ public sealed class TCNetService : ObservableObject
 {
     private const int MaxPackets = 1000;
     private readonly ConcurrentQueue<PacketItem> _incoming = new();
+    private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private IDispatcherTimer? _timer;
     private string _status = "Stopped";
     private bool _isRunning;
     private bool _pausePackets;
     private string _packetFilter = "";
+    // Cached copies of the logging preferences: OnPacket runs on the receive thread for every packet.
+    private bool _logTimePackets, _logSent;
 
     public TCNetService(AppSettings settings)
     {
         Settings = settings;
         Settings.EnsureNodeId();
+        ReloadLogSettings();
         var pb = Playback;
         pb[1].Load(1001, "Demo Artist", "Demo Track One", 245_000, 124);
         pb[2].Load(1002, "Demo Artist", "Demo Track Two", 312_000, 126);
@@ -93,6 +97,20 @@ public sealed class TCNetService : ObservableObject
     /// <summary>Case-insensitive filter on packet name / node name / summary.</summary>
     public string PacketFilter { get => _packetFilter; set => SetProperty(ref _packetFilter, value ?? ""); }
 
+    /// <summary>Log Time packets (persisted in <see cref="AppSettings.LogTimePackets"/>).</summary>
+    public bool LogTimePackets
+    {
+        get => _logTimePackets;
+        set { Settings.LogTimePackets = value; SetProperty(ref _logTimePackets, value); }
+    }
+
+    /// <summary>Log packets sent by this node (persisted in <see cref="AppSettings.LogSent"/>).</summary>
+    public bool LogSent
+    {
+        get => _logSent;
+        set { Settings.LogSent = value; SetProperty(ref _logSent, value); }
+    }
+
     public ObservableCollection<string> Warnings { get; } = [];
 
     /// <summary>Raised on the UI thread when data from a node arrived (reassembled chunks, request results).</summary>
@@ -100,10 +118,44 @@ public sealed class TCNetService : ObservableObject
 
     public event EventHandler? Restarted;
 
+    /// <summary>Shows an error from a UI action in <see cref="Status"/>.</summary>
+    public void ReportError(string action, Exception ex) => Status = $"{action} failed: {ex.Message}";
+
     public async Task StartAsync()
     {
+        await _lifecycle.WaitAsync();
+        try { StartCore(); }
+        finally { _lifecycle.Release(); }
+    }
+
+    public async Task StopAsync()
+    {
+        await _lifecycle.WaitAsync();
+        try { await StopCoreAsync(); }
+        finally { _lifecycle.Release(); }
+    }
+
+    public async Task RestartAsync()
+    {
+        await _lifecycle.WaitAsync();
+        try
+        {
+            await StopCoreAsync();
+            StartCore();
+        }
+        finally { _lifecycle.Release(); }
+    }
+
+    private void ReloadLogSettings()
+    {
+        SetProperty(ref _logTimePackets, Settings.LogTimePackets, nameof(LogTimePackets));
+        SetProperty(ref _logSent, Settings.LogSent, nameof(LogSent));
+    }
+
+    private void StartCore()
+    {
         if (Node is not null) return;
-        MulticastLockHolder.Acquire();
+        ReloadLogSettings();
         var s = Settings;
         var ns = new TCNetNodeSettings
         {
@@ -144,10 +196,12 @@ public sealed class TCNetService : ObservableObject
 
         try
         {
+            MulticastLockHolder.Acquire();
             node.Start();
         }
         catch (Exception ex)
         {
+            MulticastLockHolder.Release();
             Status = $"Start failed: {ex.Message}";
             return;
         }
@@ -162,10 +216,9 @@ public sealed class TCNetService : ObservableObject
         _timer ??= CreateTimer();
         _timer.Start();
         Restarted?.Invoke(this, EventArgs.Empty);
-        await Task.CompletedTask;
     }
 
-    public async Task StopAsync()
+    private async Task StopCoreAsync()
     {
         _timer?.Stop();
         var node = Node;
@@ -176,12 +229,6 @@ public sealed class TCNetService : ObservableObject
         Status = "Stopped";
         OnPropertyChanged(nameof(Node));
         MulticastLockHolder.Release();
-    }
-
-    public async Task RestartAsync()
-    {
-        await StopAsync();
-        await StartAsync();
     }
 
     public void ClearPackets()
@@ -231,8 +278,8 @@ public sealed class TCNetService : ObservableObject
 
     private void OnPacket(object? sender, TCNetPacketEventArgs e)
     {
-        if (e.Packet is TimePacket && !Settings.LogTimePackets) return;
-        if (e.Outgoing && !Settings.LogSent) return;
+        if (e.Packet is TimePacket && !_logTimePackets) return;
+        if (e.Outgoing && !_logSent) return;
         _incoming.Enqueue(new PacketItem(e));
         while (_incoming.Count > MaxPackets * 2) _incoming.TryDequeue(out _);
     }
@@ -250,10 +297,11 @@ public sealed class TCNetService : ObservableObject
     }
 
     /// <summary>Resolves "broadcast:60000", "node:KEY" or "ip:port" targets for the Send page.</summary>
-    public IPEndPoint? ResolveTarget(string target)
+    public IPEndPoint? ResolveTarget(string? target)
     {
         var node = Node;
-        if (node is null) return null;
+        if (node is null || string.IsNullOrWhiteSpace(target)) return null;
+        target = target.Trim();
         if (target.StartsWith("broadcast:", StringComparison.Ordinal) && int.TryParse(target["broadcast:".Length..], out int port))
             return new IPEndPoint(node.BroadcastAddress, port);
         if (target.StartsWith("node:", StringComparison.Ordinal))

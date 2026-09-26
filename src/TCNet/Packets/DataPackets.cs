@@ -266,13 +266,15 @@ public sealed class CueDataPacket : DataPacket
 
     protected override void WriteData(Span<byte> p)
     {
-        // Loop fields first, then cues: with the spec layout cue 1 wins the overlapping bytes 47–49.
+        // Loop fields first, then cues: with the spec layout a non-empty cue 1 wins the overlapping
+        // bytes 47–49; an empty cue 1 is not written so Loop OUT survives.
         Wire.U32(p, 42, LoopIn);
         Wire.U32(p, 46, LoopOut);
         for (int i = 0; i < CueCount; i++)
         {
             int o = CueTableOffset + i * CueStride;
             var c = Cues[i];
+            if (c.IsEmpty) continue;
             p[o] = c.Type;
             Wire.U32(p, o + 2, c.InTime);
             Wire.U32(p, o + 6, c.OutTime);
@@ -290,6 +292,12 @@ public sealed class CueDataPacket : DataPacket
         {
             int o = CueTableOffset + i * CueStride;
             var c = Cues[i];
+            if (i == 0 && Layout == CueTableLayout.Specification && !p.Slice(o + 3, CueStride - 3).ContainsAnyExcept((byte)0))
+            {
+                // Only bytes shared with Loop OUT are set: they belong to Loop OUT and cue 1 is empty.
+                c.Type = 0; c.InTime = 0; c.OutTime = 0; c.Color = default;
+                continue;
+            }
             c.Type = p[o];
             c.InTime = Wire.U32(p, o + 2);
             c.OutTime = Wire.U32(p, o + 6);
@@ -430,7 +438,12 @@ public sealed class MixerDataPacket : DataPacket
     public byte this[int offset]
     {
         get => _raw[offset];
-        set { if (offset < 27) throw new ArgumentOutOfRangeException(nameof(offset), "Header bytes are set through properties."); _raw[offset] = value; }
+        set
+        {
+            if (offset < 27) throw new ArgumentOutOfRangeException(nameof(offset), "Header bytes are set through properties.");
+            if (offset is >= 29 and < 45) throw new ArgumentOutOfRangeException(nameof(offset), "The mixer name is set through MixerName.");
+            _raw[offset] = value;
+        }
     }
 
     protected override void WriteData(Span<byte> p)

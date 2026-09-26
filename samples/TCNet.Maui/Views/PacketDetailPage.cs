@@ -27,10 +27,20 @@ public sealed class PacketDetailPage : ContentPage
 
         var bytes = packet.ToArray();
         var hex = new Label { Text = Wire.HexDump(bytes, 4096), FontFamily = font, FontSize = 12 };
+        var status = new Label { TextColor = Colors.Gray, FontSize = 12, VerticalOptions = LayoutOptions.Center };
+        async Task Copy(string text, string what)
+        {
+            try
+            {
+                await Clipboard.Default.SetTextAsync(text);
+                status.Text = $"Copied {what}.";
+            }
+            catch (Exception ex) { status.Text = $"Copy failed: {ex.Message}"; }
+        }
         var copy = new Button { Text = "Copy hex" };
-        copy.Clicked += async (_, _) => await Clipboard.Default.SetTextAsync(Convert.ToHexString(bytes));
+        copy.Clicked += async (_, _) => await Copy(Convert.ToHexString(bytes), "hex");
         var copyText = new Button { Text = "Copy decoded text" };
-        copyText.Clicked += async (_, _) => await Clipboard.Default.SetTextAsync(packet.ToDisplayString());
+        copyText.Clicked += async (_, _) => await Copy(packet.ToDisplayString(), "decoded text");
 
         Content = new ScrollView
         {
@@ -38,7 +48,7 @@ public sealed class PacketDetailPage : ContentPage
             {
                 Padding = 12,
                 Spacing = 12,
-                Children = { fields, new HorizontalStackLayout { Spacing = 8, Children = { copy, copyText } }, hex },
+                Children = { fields, new HorizontalStackLayout { Spacing = 8, Children = { copy, copyText, status } }, hex },
             },
         };
     }
