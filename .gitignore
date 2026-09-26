@@ -5,3 +5,4 @@ obj/
 TestResults/
 artifacts/
 build-log.txt
+installer-log.txt
