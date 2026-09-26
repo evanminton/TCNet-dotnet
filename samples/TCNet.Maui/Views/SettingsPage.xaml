@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             x:Class="TCNet.Maui.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel"
+             Title="Settings">
+    <ScrollView>
+        <VerticalStackLayout Padding="12" Spacing="10" MaximumWidthRequest="760" HorizontalOptions="Start">
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="Status" Style="{StaticResource Heading}" />
+                    <Label Text="{Binding Service.Status}" Style="{StaticResource Mono}" />
+                    <FlexLayout Wrap="Wrap">
+                        <Button Text="Start" Command="{Binding StartCommand}" Margin="0,0,8,8" />
+                        <Button Text="Stop (sends Opt-OUT)" Command="{Binding StopCommand}" Margin="0,0,8,8" />
+                        <Button Text="Apply and restart" Command="{Binding ApplyCommand}" Margin="0,0,8,8" />
+                    </FlexLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="Management header" Style="{StaticResource Heading}" />
+                    <Label Text="Node Name (GW code, max 8 characters)" Style="{StaticResource Caption}" />
+                    <Entry Text="{Binding NodeName}" MaxLength="8" />
+                    <Label Text="Node ID (unique per IP, 1–65535)" Style="{StaticResource Caption}" />
+                    <Entry Text="{Binding NodeId}" Keyboard="Numeric" />
+                    <Label Text="Node Type" Style="{StaticResource Caption}" />
+                    <Picker x:Name="RolePicker" ItemsSource="{Binding Roles}" SelectedItem="{Binding Role}" />
+                    <Label Text="Node Options" Style="{StaticResource Caption}" />
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto">
+                        <CheckBox IsChecked="{Binding OptAuth}" /><Label Grid.Column="1" Text="1 – NEED AUTHENTICATION" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="1" IsChecked="{Binding OptTcncm}" /><Label Grid.Row="1" Grid.Column="1" Text="2 – SUPPORTS TCNCM (listens to control messages)" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="2" IsChecked="{Binding OptTcnasdp}" /><Label Grid.Row="2" Grid.Column="1" Text="4 – SUPPORTS TCNASDP (listens to application data)" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="3" IsChecked="{Binding OptDnd}" /><Label Grid.Row="3" Grid.Column="1" Text="8 – DND (do not disturb / sleeping)" VerticalOptions="Center" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="Network" Style="{StaticResource Heading}" />
+                    <Label Text="Interface" Style="{StaticResource Caption}" />
+                    <Picker ItemsSource="{Binding Interfaces}" SelectedItem="{Binding Interface}" />
+                    <Label Text="Unicast listener port (65023–65535, empty = first free)" Style="{StaticResource Caption}" />
+                    <Entry Text="{Binding ListenerPort}" Keyboard="Numeric" />
+                    <Label Text="Broadcast address override (empty = interface broadcast)" Style="{StaticResource Caption}" />
+                    <Entry Text="{Binding Broadcast}" Placeholder="e.g. 192.168.1.255" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="Behaviour" Style="{StaticResource Heading}" />
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+                        <CheckBox IsChecked="{Binding AutoMetadata}" /><Label Grid.Column="1" Text="Request metadata when a layer's track changes" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="1" IsChecked="{Binding AutoMetrics}" /><Label Grid.Row="1" Grid.Column="1" Text="Request metrics when a layer's track or state changes" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="2" IsChecked="{Binding AutoWaveform}" /><Label Grid.Row="2" Grid.Column="1" Text="Request small waveforms for the Live page" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="3" IsChecked="{Binding AutoTimeSync}" /><Label Grid.Row="3" Grid.Column="1" Text="Time sync with every node every 10 s" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="4" IsChecked="{Binding AutoMasterElection}" /><Label Grid.Row="4" Grid.Column="1" Text="Auto master election (node type Auto becomes Master when the master leaves)" VerticalOptions="Center" />
+                        <CheckBox Grid.Row="5" IsChecked="{Binding Simulate}" /><Label Grid.Row="5" Grid.Column="1" Text="Simulate a master: 8 demo layers, time stream, status, answers requests and control" VerticalOptions="Center" />
+                    </Grid>
+                    <Label Text="Time packet interval when simulating (1–40 ms)" Style="{StaticResource Caption}" />
+                    <Entry Text="{Binding TimeInterval}" Keyboard="Numeric" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="4">
+                    <Label Text="Warnings" Style="{StaticResource Heading}" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Warnings}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <Label Text="{Binding .}" Style="{StaticResource Caption}" />
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

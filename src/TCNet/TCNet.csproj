@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>TCNet</RootNamespace>
+    <AssemblyName>TCNet</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <PackageId>TCNet</PackageId>
+    <Description>TCNet Link Specification V3.5.1B for .NET 10 / .NET MAUI: every packet type, chunk reassembly, node discovery and population list, time sync, data requests, time packet generation and human-readable option catalogs.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>tcnet;timecode;pioneer;showkontrol;dj;maui</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="TCNet.Tests" />
+  </ItemGroup>
+</Project>
