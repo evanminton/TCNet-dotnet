@@ -299,7 +299,7 @@ internal sealed class Tool
         return ack?.Code == NotificationCode.Ok ? 0 : 1;
     }
 
-    private async Task<(TCNetNode Node, RemoteNode? Target, string Rest)> Targeted()
+    private async Task<(TCNetNode Node, RemoteNode? Target, string Value)> Targeted()
     {
         var node = await Node();
         if (_args.Count > 2) return (node, await Find(node, _args[1]), Rest(2));
