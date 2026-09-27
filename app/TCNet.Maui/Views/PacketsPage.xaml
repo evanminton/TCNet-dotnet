@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             xmlns:svc="clr-namespace:TCNet.Maui.Services"
+             x:Class="TCNet.Maui.Views.PacketsPage"
+             x:DataType="vm:PacketsViewModel"
+             Title="Packets">
+    <Grid RowDefinitions="Auto,*" Padding="12" RowSpacing="8">
+        <FlexLayout Wrap="Wrap" AlignItems="Center" JustifyContent="Start">
+            <Entry Text="{Binding Filter}" Placeholder="Filter (name, node, address, summary)" WidthRequest="320" Margin="0,0,12,0" />
+            <HorizontalStackLayout Spacing="4" Margin="0,0,12,0">
+                <CheckBox IsChecked="{Binding Paused}" />
+                <Label Text="Pause" VerticalOptions="Center" />
+            </HorizontalStackLayout>
+            <HorizontalStackLayout Spacing="4" Margin="0,0,12,0">
+                <CheckBox IsChecked="{Binding LogTime}" />
+                <Label Text="Log Time packets" VerticalOptions="Center" />
+            </HorizontalStackLayout>
+            <HorizontalStackLayout Spacing="4" Margin="0,0,12,0">
+                <CheckBox IsChecked="{Binding LogSent}" />
+                <Label Text="Log sent packets" VerticalOptions="Center" />
+            </HorizontalStackLayout>
+            <Button Text="Clear" Command="{Binding ClearCommand}" />
+        </FlexLayout>
+        <CollectionView x:Name="List" Grid.Row="1" ItemsSource="{Binding Packets}" SelectionMode="Single" SelectionChanged="OnSelected">
+            <CollectionView.EmptyView>
+                <Label Text="No packets yet. Start the node in Settings; every received (and optionally sent) TCNet packet is listed here, newest first. Tap one to see every field."
+                       Style="{StaticResource Caption}" HorizontalTextAlignment="Center" Margin="24" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="svc:PacketRow">
+                    <Grid ColumnDefinitions="90,40,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" Padding="0,3">
+                        <Label Text="{Binding Time}" Style="{StaticResource Mono}" />
+                        <Label Grid.Column="1" Text="{Binding Direction}" TextColor="{Binding DirectionColor}" FontAttributes="Bold" />
+                        <Label Grid.Column="2" FontAttributes="Bold">
+                            <Label.FormattedText>
+                                <FormattedString>
+                                    <Span Text="{Binding Title}" />
+                                    <Span Text="   " />
+                                    <Span Text="{Binding From}" FontAttributes="None" />
+                                    <Span Text="   " />
+                                    <Span Text="{Binding Route}" FontAttributes="None" />
+                                </FormattedString>
+                            </Label.FormattedText>
+                        </Label>
+                        <Label Grid.Row="1" Grid.Column="2" Text="{Binding Summary}" Style="{StaticResource Caption}" LineBreakMode="TailTruncation" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             x:Class="TCNet.Maui.Views.ReferencePage"
+             x:DataType="vm:ReferenceViewModel"
+             Title="Reference">
+    <Grid RowDefinitions="Auto,*" Padding="12" RowSpacing="8">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <SearchBar Text="{Binding Search}" Placeholder="Search packets, fields, options, codes and notes (e.g. 'cue', 'BPM', 'SMPTE', '0x')" />
+            <Button Grid.Column="1" Text="Copy as Markdown" Command="{Binding CopyCommand}" />
+        </Grid>
+        <CollectionView Grid.Row="1" ItemsSource="{Binding Groups}" IsGrouped="True" SelectionMode="None">
+            <CollectionView.GroupHeaderTemplate>
+                <DataTemplate x:DataType="vm:RefGroup">
+                    <Label Text="{Binding Name}" Style="{StaticResource Heading}" Margin="0,14,0,4" />
+                </DataTemplate>
+            </CollectionView.GroupHeaderTemplate>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="vm:RefRow">
+                    <Grid ColumnDefinitions="80,260,*" ColumnSpacing="8" Padding="0,1">
+                        <Label Text="{Binding Value}" Style="{StaticResource Mono}" />
+                        <Label Grid.Column="1" Text="{Binding Title}" />
+                        <Label Grid.Column="2" Text="{Binding Detail}" Style="{StaticResource Caption}" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

@@ -1,59 +1,38 @@
 namespace TCNet;
 
-/// <summary>SMPTE timecode as carried per layer in the Time packet.</summary>
+/// <summary>HH:MM:SS:FF as carried in the Time packet.</summary>
 public readonly record struct Timecode(byte Hours, byte Minutes, byte Seconds, byte Frames)
 {
     public override string ToString() => $"{Hours:00}:{Minutes:00}:{Seconds:00}:{Frames:00}";
 
-    /// <summary>Nominal frames per second for a mode (29.97 counts 30 frames).</summary>
-    public static int FramesPerSecond(SmpteMode mode) => mode switch
+    /// <summary>Frames counted per second (29.97 counts 30, non-drop).</summary>
+    public static int FrameCount(SmpteMode mode) => mode switch
     {
         SmpteMode.Fps24 => 24,
         SmpteMode.Fps25 => 25,
-        SmpteMode.Fps29_97 => 30,
-        SmpteMode.Fps30 => 30,
         _ => 30,
     };
 
-    /// <summary>Exact frame rate (29.97 → 30000/1001).</summary>
-    public static double FrameRate(SmpteMode mode) => mode == SmpteMode.Fps29_97 ? 30000.0 / 1001.0 : FramesPerSecond(mode);
+    public static double FrameRate(SmpteMode mode) => mode == SmpteMode.Fps2997 ? 30000.0 / 1001.0 : FrameCount(mode);
 
-    /// <summary>Converts a millisecond position to timecode (hours wrap at 24; 29.97 uses non-drop counting).</summary>
     public static Timecode FromMilliseconds(uint ms, SmpteMode mode)
     {
-        int fps = FramesPerSecond(mode);
-        var (num, den) = Rate(mode);
-        long totalFrames = ms * num / (1000L * den);
-        long frames = totalFrames % fps;
-        long totalSeconds = totalFrames / fps;
-        return new Timecode(
-            (byte)(totalSeconds / 3600 % 24),
-            (byte)(totalSeconds / 60 % 60),
-            (byte)(totalSeconds % 60),
-            (byte)frames);
+        int fps = FrameCount(mode);
+        long frames = (long)Math.Floor(ms / 1000.0 * FrameRate(mode));
+        long secs = frames / fps;
+        return new Timecode((byte)(secs / 3600 % 24), (byte)(secs / 60 % 60), (byte)(secs % 60), (byte)(frames % fps));
     }
 
-    /// <summary>
-    /// Converts timecode back to milliseconds: the first whole millisecond inside the frame, so
-    /// <see cref="FromMilliseconds"/> returns the same timecode.
-    /// </summary>
     public uint ToMilliseconds(SmpteMode mode)
     {
-        int fps = FramesPerSecond(mode);
-        var (num, den) = Rate(mode);
-        long totalFrames = ((Hours * 60L + Minutes) * 60 + Seconds) * fps + Frames;
-        return (uint)((totalFrames * 1000L * den + num - 1) / num);
+        long frames = ((Hours * 60L + Minutes) * 60 + Seconds) * FrameCount(mode) + Frames;
+        return (uint)Math.Round(frames * 1000.0 / FrameRate(mode));
     }
 
-    /// <summary>Exact frame rate as a fraction (integer maths avoids off-by-one frames).</summary>
-    private static (long Num, long Den) Rate(SmpteMode mode) =>
-        mode == SmpteMode.Fps29_97 ? (30000, 1001) : (FramesPerSecond(mode), 1);
-
-    /// <summary>Parses "HH:MM:SS:FF" (':' ';' or '.' separators).</summary>
     public static Timecode Parse(string s)
     {
-        var parts = s.Split(':', ';', '.');
-        if (parts.Length != 4) throw new FormatException("Expected HH:MM:SS:FF.");
-        return new Timecode(byte.Parse(parts[0]), byte.Parse(parts[1]), byte.Parse(parts[2]), byte.Parse(parts[3]));
+        var p = s.Split(':', ';', '.');
+        if (p.Length != 4) throw new FormatException("Expected HH:MM:SS:FF.");
+        return new Timecode(byte.Parse(p[0]), byte.Parse(p[1]), byte.Parse(p[2]), byte.Parse(p[3]));
     }
 }

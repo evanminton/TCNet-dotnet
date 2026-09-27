@@ -1,6 +1,6 @@
 namespace TCNet;
 
-/// <summary>Byte 7 of the management header.</summary>
+/// <summary>Header byte 7.</summary>
 public enum MessageType : byte
 {
     OptIn = 2,
@@ -19,7 +19,7 @@ public enum MessageType : byte
     Time = 254,
 }
 
-/// <summary>Node role (byte 17). The spec lists these as the values 1, 2, 4, 8.</summary>
+/// <summary>Header byte 17.</summary>
 public enum NodeType : byte
 {
     Auto = 1,
@@ -28,34 +28,31 @@ public enum NodeType : byte
     Repeater = 8,
 }
 
-/// <summary>Node Options flags (bytes 18–19). Flags are summed.</summary>
+/// <summary>Header bytes 18–19, summed flags.</summary>
 [Flags]
 public enum NodeOptions : ushort
 {
     None = 0,
     NeedAuthentication = 1,
-    SupportsControlMessages = 2,
+    SupportsControl = 2,
     SupportsApplicationData = 4,
     DoNotDisturb = 8,
 }
 
-/// <summary>Layer numbers used by data packets and requests (1-based).</summary>
-public enum TCNetLayer : byte
+/// <summary>Layer numbers 1–8 (1, 2, 3, 4, A, B, M, C).</summary>
+public enum Layer : byte
 {
     None = 0,
-    Layer1 = 1,
-    Layer2 = 2,
-    Layer3 = 3,
-    Layer4 = 4,
-    LayerA = 5,
-    LayerB = 6,
-    /// <summary>Master out (M).</summary>
-    LayerM = 7,
-    /// <summary>Layer C (listed as RESERVED in data packet tables).</summary>
-    LayerC = 8,
+    L1 = 1,
+    L2 = 2,
+    L3 = 3,
+    L4 = 4,
+    A = 5,
+    B = 6,
+    M = 7,
+    C = 8,
 }
 
-/// <summary>Play head status of a layer.</summary>
 public enum LayerState : byte
 {
     Idle = 0,
@@ -63,14 +60,14 @@ public enum LayerState : byte
     Looping = 4,
     Paused = 5,
     Stopped = 6,
-    CueButtonDown = 7,
+    CueDown = 7,
     PlatterDown = 8,
     FastForward = 9,
     FastReverse = 10,
     Hold = 11,
 }
 
-/// <summary>Data Type byte (24) of Request, Data (200) and Data File (204) packets.</summary>
+/// <summary>Byte 24 of Request, Data (200) and Data File (204) packets.</summary>
 public enum DataType : byte
 {
     Metrics = 2,
@@ -83,7 +80,6 @@ public enum DataType : byte
     Mixer = 150,
 }
 
-/// <summary>Error / Notification code (bytes 26–27).</summary>
 public enum NotificationCode : ushort
 {
     RequestUnknown = 1,
@@ -92,26 +88,22 @@ public enum NotificationCode : ushort
     Ok = 255,
 }
 
-/// <summary>Step byte of Time Sync / Control / Text packets.</summary>
-public enum SyncStep : byte
+public enum Step : byte
 {
     Initialize = 0,
     Response = 1,
 }
 
-/// <summary>SMPTE frame rate as carried in Status and Time packets.</summary>
 public enum SmpteMode : byte
 {
-    /// <summary>Per-layer value 0: use the general SMPTE mode (byte 105).</summary>
-    UseGeneral = 0,
+    /// <summary>0 in a layer field: use the general mode.</summary>
+    General = 0,
     Fps24 = 24,
     Fps25 = 25,
-    /// <summary>29.97 fps.</summary>
-    Fps29_97 = 29,
+    Fps2997 = 29,
     Fps30 = 30,
 }
 
-/// <summary>Time Code State per layer in the Time packet.</summary>
 public enum TimecodeState : byte
 {
     Stopped = 0,
@@ -119,7 +111,6 @@ public enum TimecodeState : byte
     ForceResync = 2,
 }
 
-/// <summary>Auto Master Mode (Status byte 84).</summary>
 public enum AutoMasterMode : byte
 {
     Disabled = 0,
@@ -127,30 +118,28 @@ public enum AutoMasterMode : byte
     LinkMaster = 2,
 }
 
-/// <summary>Beat grid entry type.</summary>
 public enum BeatType : byte
 {
-    Unknown = 0,
+    None = 0,
     UpBeat = 10,
     DownBeat = 20,
 }
 
-/// <summary>Mixer type (Mixer data byte 26).</summary>
 public enum MixerType : byte
 {
     Standard = 0,
     Extended = 2,
 }
 
-/// <summary>Send Return 3 source / BeatFX channel select.</summary>
+/// <summary>Send Return 3 source and BeatFX channel select.</summary>
 public enum MixerChannelSelect : byte
 {
-    Channel1 = 0,
-    Channel2 = 1,
-    Channel3 = 2,
-    Channel4 = 3,
-    Channel5 = 4,
-    Channel6 = 5,
+    Ch1 = 0,
+    Ch2 = 1,
+    Ch3 = 2,
+    Ch4 = 3,
+    Ch5 = 4,
+    Ch6 = 5,
     Mic = 6,
     Master = 7,
     CrossfaderA = 8,
@@ -158,7 +147,6 @@ public enum MixerChannelSelect : byte
     None = 255,
 }
 
-/// <summary>Send Return 3 type.</summary>
 public enum SendReturnType : byte
 {
     UsbAux = 0,
@@ -168,7 +156,6 @@ public enum SendReturnType : byte
     None = 255,
 }
 
-/// <summary>Mixer channel input source.</summary>
 public enum ChannelSource : byte
 {
     UsbA = 0,
@@ -183,7 +170,6 @@ public enum ChannelSource : byte
     ReturnAll = 9,
 }
 
-/// <summary>Mixer channel crossfader assignment.</summary>
 public enum CrossfaderAssign : byte
 {
     Thru = 0,
@@ -191,11 +177,11 @@ public enum CrossfaderAssign : byte
     B = 2,
 }
 
-/// <summary>Where the cue table starts inside a Cue Data packet (see README "spec notes").</summary>
-public enum CueTableLayout
+/// <summary>Cue Data table position; the spec prints cue 1 at 47, overlapping Loop OUT (46–49).</summary>
+public enum CueLayout
 {
-    /// <summary>Offsets exactly as printed: cue 1 type at byte 47 (overlaps Loop OUT bytes 47–49).</summary>
-    Specification,
-    /// <summary>Cue 1 type at byte 50, immediately after Loop OUT; same 22-byte stride.</summary>
+    /// <summary>Printed offsets (cue 1 at 47). Empty cue 1 is not written so Loop OUT survives.</summary>
+    Printed,
+    /// <summary>Cue 1 at 50, directly after Loop OUT, same 22-byte stride.</summary>
     AfterLoop,
 }

@@ -3,256 +3,225 @@ using TCNet.Text;
 namespace TCNet;
 
 /// <summary>
-/// Data packets whose content may span several datagrams: Data Size (26–29, total of all packets),
-/// Total Packets (30–33), Packet No (34–37), Data Cluster Size (38–41) and data from byte 42.
+/// Data split over packets: Data Size (26, total of all packets), Total Packets (30), Packet No (34),
+/// Data Cluster Size (38, reserved in small waveform) and data from 42.
 /// </summary>
-public abstract class ChunkedDataPacket : DataPacket
+public abstract class ChunkedPacket : DataPacket
 {
-    /// <summary>Total data size across all packets.</summary>
-    public uint DataSize { get; set; }
-
-    /// <summary>Number of packets used for the data.</summary>
+    public uint TotalSize { get; set; }
     public uint TotalPackets { get; set; } = 1;
-
-    /// <summary>This packet's number (this library sends 0-based; reassembly accepts either base).</summary>
     public uint PacketNumber { get; set; }
-
-    /// <summary>Data cluster size (bytes per packet). Reserved/zero in small waveform packets.</summary>
     public uint ClusterSize { get; set; }
-
-    /// <summary>This packet's slice of data (bytes 42…).</summary>
     public byte[] Payload { get; set; } = [];
 
-    /// <summary>Whether bytes 38–41 carry the cluster size (false for small waveform, where they are reserved).</summary>
-    protected virtual bool HasClusterSize => true;
+    /// <summary>Standard bytes per packet for this data type.</summary>
+    public abstract int StandardCluster { get; }
 
-    /// <summary>Standard cluster size used by <see cref="Split{T}"/>.</summary>
-    public abstract int StandardClusterSize { get; }
+    protected virtual bool HasClusterField => true;
 
-    public override int Length => TCNetConstants.PayloadHeaderSize + Payload.Length;
+    public override int Length => TCNetConstants.PayloadOffset + Payload.Length;
 
-    protected override void WriteData(Span<byte> p)
+    protected override void EncodeData(Span<byte> p)
     {
-        Wire.U32(p, 26, DataSize == 0 ? (uint)Payload.Length : DataSize);
-        Wire.U32(p, 30, TotalPackets);
-        Wire.U32(p, 34, PacketNumber);
-        if (HasClusterSize) Wire.U32(p, 38, ClusterSize == 0 ? (uint)StandardClusterSize : ClusterSize);
-        Payload.CopyTo(p[42..]);
+        Wire.PutU32(p, 26, TotalSize == 0 ? (uint)Payload.Length : TotalSize);
+        Wire.PutU32(p, 30, TotalPackets);
+        Wire.PutU32(p, 34, PacketNumber);
+        if (HasClusterField) Wire.PutU32(p, 38, ClusterSize == 0 ? (uint)StandardCluster : ClusterSize);
+        Payload.AsSpan(0, Math.Min(Payload.Length, p.Length - 42)).CopyTo(p[42..]);
     }
 
-    protected override void ReadData(ReadOnlySpan<byte> p, int receivedLength)
+    protected override void DecodeData(ReadOnlySpan<byte> p, int datagramLength)
     {
-        DataSize = Wire.U32(p, 26);
+        TotalSize = Wire.U32(p, 26);
         TotalPackets = Wire.U32(p, 30);
         PacketNumber = Wire.U32(p, 34);
-        ClusterSize = HasClusterSize ? Wire.U32(p, 38) : 0;
-        Payload = p.Slice(42, Math.Max(0, receivedLength - 42)).ToArray();
+        ClusterSize = HasClusterField ? Wire.U32(p, 38) : 0;
+        Payload = p.Slice(42, Math.Max(0, datagramLength - 42)).ToArray();
     }
 
     protected override void DescribeData(List<TCNetField> f)
     {
-        f.Add(new(26, 4, "Data Size", DataSize.ToString()));
+        f.Add(new(26, 4, "Data Size", TotalSize.ToString(), "all packets together"));
         f.Add(new(30, 4, "Total Packets", TotalPackets.ToString()));
         f.Add(new(34, 4, "Packet No", PacketNumber.ToString()));
-        f.Add(new(38, 4, HasClusterSize ? "Data Cluster Size" : "RESERVED", ClusterSize.ToString()));
+        f.Add(new(38, 4, HasClusterField ? "Data Cluster Size" : "RESERVED", ClusterSize.ToString()));
         DescribePayload(f);
     }
 
     protected virtual void DescribePayload(List<TCNetField> f) =>
-        f.Add(new(42, Payload.Length, "Data", $"{Payload.Length} bytes", Convert.ToHexString(Payload.AsSpan(0, Math.Min(16, Payload.Length)))));
+        f.Add(new(42, Payload.Length, "Data", TCNetUnits.Bytes(Payload.Length), Wire.Hex(Payload, 16)));
 
-    public override string Summary => $"L{TCNetText.LayerName(LayerId)} packet {PacketNumber}/{TotalPackets}, {Payload.Length} of {DataSize} bytes";
+    public override string Summary => $"L{TCNetText.LayerName(LayerId)} packet {PacketNumber} of {TotalPackets}, {Payload.Length}/{TotalSize} bytes";
 
-    /// <summary>Splits <paramref name="data"/> into packets of at most <paramref name="clusterSize"/> bytes (0-based numbering).</summary>
-    public static List<T> Split<T>(byte[] data, byte layer, Func<T> create, int clusterSize = 0) where T : ChunkedDataPacket
+    /// <summary>Splits data into packets of at most <paramref name="cluster"/> bytes, numbered from 0.</summary>
+    public static List<T> Split<T>(ReadOnlySpan<byte> data, byte layer, Func<T> create, int cluster = 0) where T : ChunkedPacket
     {
-        var list = new List<T>();
-        var probe = create();
-        if (clusterSize <= 0) clusterSize = probe.StandardClusterSize;
-        uint total = (uint)Math.Max(1, (data.Length + clusterSize - 1) / clusterSize);
-        for (uint i = 0; i < total; i++)
+        var first = create();
+        if (cluster <= 0) cluster = first.StandardCluster;
+        int total = Math.Max(1, (data.Length + cluster - 1) / cluster);
+        var list = new List<T>(total);
+        for (int i = 0; i < total; i++)
         {
-            var pkt = i == 0 ? probe : create();
-            int start = (int)i * clusterSize;
-            int len = Math.Min(clusterSize, data.Length - start);
+            var pkt = i == 0 ? first : create();
+            int start = i * cluster;
             pkt.LayerId = layer;
-            pkt.DataSize = (uint)data.Length;
-            pkt.TotalPackets = total;
-            pkt.PacketNumber = i;
-            pkt.ClusterSize = (uint)clusterSize;
-            pkt.Payload = len > 0 ? data.AsSpan(start, len).ToArray() : [];
+            pkt.TotalSize = (uint)data.Length;
+            pkt.TotalPackets = (uint)total;
+            pkt.PacketNumber = (uint)i;
+            pkt.ClusterSize = (uint)cluster;
+            pkt.Payload = data.Slice(start, Math.Min(cluster, data.Length - start)).ToArray();
             list.Add(pkt);
         }
         return list;
     }
 }
 
-/// <summary>Data type 8 – Beat Grid Data. 8-byte entries; max 2400 data bytes per packet.</summary>
-public sealed class BeatGridDataPacket : ChunkedDataPacket
+/// <summary>Data type 8 · Beat Grid. 8-byte entries at OFFSET = beat × 8 − packet × 2400.</summary>
+public sealed class BeatGridPacket : ChunkedPacket
 {
     public override DataType DataType => DataType.BeatGrid;
-    public override string Name => "Data – Beat Grid";
-    public override int StandardClusterSize => TCNetConstants.BeatGridClusterSize;
+    public override string Name => "Data · Beat Grid";
+    public override int StandardCluster => TCNetConstants.BeatGridCluster;
 
-    /// <summary>Entries contained in this packet alone.</summary>
-    public IReadOnlyList<BeatGridEntry> Entries => BeatGrid.Decode(Payload).Entries;
+    public IReadOnlyList<Beat> Beats => BeatGrid.Decode(Payload).Beats;
 
     protected override void DescribePayload(List<TCNetField> f)
     {
         base.DescribePayload(f);
-        var entries = Entries;
-        foreach (var e in entries.Take(8))
-            f.Add(new(-1, 8, $"Beat {e.BeatNumber}", $"{e.TimestampMs} ms", TCNetText.Describe(e.Type)));
-        if (entries.Count > 8) f.Add(new(-1, 0, "…", $"{entries.Count - 8} more beats"));
+        var beats = Beats;
+        for (int i = 0; i < Math.Min(8, beats.Count); i++)
+        {
+            var b = beats[i];
+            f.Add(new(42 + i * 8, 8, $"Beat {b.Number}", $"{b.TimeMs} ms", $"{TCNetText.Describe(b.Type)}, {TCNetUnits.Ms(b.TimeMs)}"));
+        }
+        if (beats.Count > 8) f.Add(new(42 + 64, 0, "…", $"{beats.Count - 8} more beats"));
     }
 }
 
-/// <summary>Data type 16 – Small Wave Form (2442 bytes): 1200 bars of (level, colour).</summary>
-public sealed class SmallWaveformPacket : ChunkedDataPacket
+/// <summary>Data type 16 · Small Wave Form (2442 bytes): 1200 × (level, colour).</summary>
+public sealed class SmallWaveformPacket : ChunkedPacket
 {
     public SmallWaveformPacket()
     {
-        Payload = new byte[TCNetConstants.SmallWaveformDataSize];
-        DataSize = TCNetConstants.SmallWaveformDataSize;
+        Payload = new byte[TCNetConstants.SmallWaveformDataLength];
+        TotalSize = TCNetConstants.SmallWaveformDataLength;
     }
 
     public override DataType DataType => DataType.SmallWaveform;
-    public override string Name => "Data – Small Waveform";
-    public override int StandardClusterSize => TCNetConstants.SmallWaveformDataSize;
-    protected override bool HasClusterSize => false;
-    public override int Length => TCNetConstants.SmallWaveformSize;
+    public override string Name => "Data · Small Waveform";
+    public override int StandardCluster => TCNetConstants.SmallWaveformDataLength;
+    public override int Length => TCNetConstants.SmallWaveformLength;
+    protected override bool HasClusterField => false;
 
     public Waveform Waveform => Waveform.Decode(Payload);
 
-    protected override void WriteData(Span<byte> p)
-    {
-        if (Payload.Length != TCNetConstants.SmallWaveformDataSize)
-        {
-            var fixedSize = new byte[TCNetConstants.SmallWaveformDataSize];
-            Payload.AsSpan(0, Math.Min(Payload.Length, fixedSize.Length)).CopyTo(fixedSize);
-            Payload = fixedSize;
-        }
-        base.WriteData(p);
-    }
-
-    protected override void ReadData(ReadOnlySpan<byte> p, int receivedLength)
-    {
-        base.ReadData(p, Math.Max(receivedLength, TCNetConstants.SmallWaveformSize));
-        if (Payload.Length > TCNetConstants.SmallWaveformDataSize) Payload = Payload[..TCNetConstants.SmallWaveformDataSize];
-    }
-
-    /// <summary>Sets the 1200 bars (shorter input is zero padded).</summary>
     public void SetBars(IReadOnlyList<WaveformBar> bars)
     {
-        var data = new byte[TCNetConstants.SmallWaveformDataSize];
-        for (int i = 0; i < Math.Min(bars.Count, 1200); i++)
+        var data = new byte[TCNetConstants.SmallWaveformDataLength];
+        for (int i = 0; i < Math.Min(1200, bars.Count); i++)
         {
             data[2 * i] = bars[i].Level;
             data[2 * i + 1] = bars[i].Color;
         }
         Payload = data;
-        DataSize = (uint)data.Length;
+        TotalSize = (uint)data.Length;
+    }
+
+    protected override void DecodeData(ReadOnlySpan<byte> p, int datagramLength)
+    {
+        base.DecodeData(p, Math.Max(datagramLength, TCNetConstants.SmallWaveformLength));
+        if (Payload.Length > TCNetConstants.SmallWaveformDataLength) Payload = Payload[..TCNetConstants.SmallWaveformDataLength];
     }
 
     protected override void DescribePayload(List<TCNetField> f)
     {
         var w = Waveform;
-        f.Add(new(42, 2400, "Waveform Data", $"{w.Bars.Count} bars", $"peak level {w.PeakLevel}"));
+        f.Add(new(42, 2400, "Waveform Data", $"{w.Bars.Count} bars", $"level (1st byte) / colour (2nd byte), peak {w.Peak}"));
     }
 }
 
-/// <summary>Data type 32 – Big Wave Form. Level/colour pairs spread over packets of 4800 bytes.</summary>
-public sealed class BigWaveformPacket : ChunkedDataPacket
+/// <summary>Data type 32 · Big Wave Form (4800 bytes per packet).</summary>
+public sealed class BigWaveformPacket : ChunkedPacket
 {
     public override DataType DataType => DataType.BigWaveform;
-    public override string Name => "Data – Big Waveform";
-    public override int StandardClusterSize => TCNetConstants.BigWaveformClusterSize;
+    public override string Name => "Data · Big Waveform";
+    public override int StandardCluster => TCNetConstants.FileCluster;
 }
 
-/// <summary>Type 204 – Data File, data type 128 – Low Res Artwork (JPEG bytes over packets of 4800 bytes).</summary>
-public sealed class LowResArtworkPacket : ChunkedDataPacket
+/// <summary>Type 204 · Data File, data type 128 · Low Res Artwork (JPEG, 4800 bytes per packet).</summary>
+public sealed class ArtworkPacket : ChunkedPacket
 {
     public override MessageType MessageType => MessageType.DataFile;
     public override DataType DataType => DataType.LowResArtwork;
-    public override string Name => "Data File – Low Res Artwork";
-    public override int StandardClusterSize => TCNetConstants.ArtworkClusterSize;
+    public override string Name => "Data File · Low Res Artwork";
+    public override int StandardCluster => TCNetConstants.FileCluster;
 
-    protected override void DescribePayload(List<TCNetField> f)
-    {
-        bool jpegStart = Payload.Length >= 2 && Payload[0] == 0xFF && Payload[1] == 0xD8;
-        f.Add(new(42, Payload.Length, "File Data", $"{Payload.Length} bytes", jpegStart ? "JPEG start (FF D8)" : null));
-    }
+    protected override void DescribePayload(List<TCNetField> f) =>
+        f.Add(new(42, Payload.Length, "File Data", TCNetUnits.Bytes(Payload.Length),
+            Payload.Length >= 2 && Payload[0] == 0xFF && Payload[1] == 0xD8 ? "JPEG start (FF D8)" : null));
 }
 
-/// <summary>One beat grid entry: beat number, type (20 downbeat / 10 upbeat) and timestamp in ms.</summary>
-public readonly record struct BeatGridEntry(ushort BeatNumber, BeatType Type, uint TimestampMs);
+public readonly record struct Beat(ushort Number, BeatType Type, uint TimeMs);
 
-/// <summary>A decoded beat grid.</summary>
-public sealed class BeatGrid
+/// <summary>Decoded beat grid.</summary>
+public sealed class BeatGrid(IReadOnlyList<Beat> beats)
 {
-    public BeatGrid(IReadOnlyList<BeatGridEntry> entries) => Entries = entries;
+    public IReadOnlyList<Beat> Beats { get; } = beats;
 
-    public IReadOnlyList<BeatGridEntry> Entries { get; }
-
-    /// <summary>Decodes 8-byte entries, skipping all-zero slots.</summary>
     public static BeatGrid Decode(ReadOnlySpan<byte> data)
     {
-        var list = new List<BeatGridEntry>(data.Length / 8);
+        var list = new List<Beat>(data.Length / 8);
         for (int o = 0; o + 8 <= data.Length; o += 8)
         {
-            var e = new BeatGridEntry(Wire.U16(data, o), (BeatType)data[o + 2], Wire.U32(data, o + 4));
-            if (e.BeatNumber == 0 && e.TimestampMs == 0 && e.Type == BeatType.Unknown) continue;
-            list.Add(e);
+            var b = new Beat(Wire.U16(data, o), (BeatType)data[o + 2], Wire.U32(data, o + 4));
+            if (b.Number == 0 && b.TimeMs == 0 && b.Type == BeatType.None) continue;
+            list.Add(b);
         }
         return new BeatGrid(list);
     }
 
-    /// <summary>Encodes entries at index = beat number × 8 (matching the spec's OFFSET formula).</summary>
+    /// <summary>Entries placed at beat number × 8.</summary>
     public byte[] Encode()
     {
-        int max = Entries.Count == 0 ? 0 : Entries.Max(e => e.BeatNumber);
+        int max = Beats.Count == 0 ? -1 : Beats.Max(b => b.Number);
         var data = new byte[(max + 1) * 8];
-        foreach (var e in Entries)
+        foreach (var b in Beats)
         {
-            int o = e.BeatNumber * 8;
-            Wire.U16(data, o, e.BeatNumber);
-            data[o + 2] = (byte)e.Type;
-            Wire.U32(data, o + 4, e.TimestampMs);
+            int o = b.Number * 8;
+            Wire.PutU16(data, o, b.Number);
+            data[o + 2] = (byte)b.Type;
+            Wire.PutU32(data, o + 4, b.TimeMs);
         }
         return data;
     }
 
-    /// <summary>The last beat at or before <paramref name="positionMs"/>.</summary>
-    public BeatGridEntry? BeatAt(uint positionMs)
+    /// <summary>Last beat at or before a position.</summary>
+    public Beat? At(uint ms)
     {
-        BeatGridEntry? found = null;
-        foreach (var e in Entries)
+        Beat? hit = null;
+        foreach (var b in Beats)
         {
-            if (e.TimestampMs > positionMs) break;
-            found = e;
+            if (b.TimeMs > ms) break;
+            hit = b;
         }
-        return found;
+        return hit;
     }
 }
 
-/// <summary>One waveform bar: level (odd, i.e. first byte of each pair) and colour intensity (second byte).</summary>
+/// <summary>A waveform bar: level (first byte of each pair) and colour intensity (second).</summary>
 public readonly record struct WaveformBar(byte Level, byte Color)
 {
-    /// <summary>Spec suggestion for a blue (Pioneer-like) look: R = G = colour, B = 255.</summary>
-    public (byte R, byte G, byte B) BlueRgb => (Color, Color, 255);
+    /// <summary>Spec's blue look: R = G = colour, B = 255.</summary>
+    public (byte R, byte G, byte B) Blue => (Color, Color, 255);
 
-    /// <summary>Spec suggestion for a green look: R = colour, G = 255, B = colour.</summary>
-    public (byte R, byte G, byte B) GreenRgb => (Color, 255, Color);
+    /// <summary>Spec's green look: R = colour, G = 255, B = colour.</summary>
+    public (byte R, byte G, byte B) Green => (Color, 255, Color);
 }
 
-/// <summary>A decoded small or big waveform.</summary>
-public sealed class Waveform
+public sealed class Waveform(IReadOnlyList<WaveformBar> bars)
 {
-    public Waveform(IReadOnlyList<WaveformBar> bars) => Bars = bars;
-
-    public IReadOnlyList<WaveformBar> Bars { get; }
-
-    public byte PeakLevel => Bars.Count == 0 ? (byte)0 : Bars.Max(b => b.Level);
+    public IReadOnlyList<WaveformBar> Bars { get; } = bars;
+    public byte Peak => Bars.Count == 0 ? (byte)0 : Bars.Max(b => b.Level);
 
     public static Waveform Decode(ReadOnlySpan<byte> data)
     {
@@ -263,8 +232,8 @@ public sealed class Waveform
 
     public byte[] Encode()
     {
-        var data = new byte[Bars.Count * 2];
-        for (int i = 0; i < Bars.Count; i++) { data[2 * i] = Bars[i].Level; data[2 * i + 1] = Bars[i].Color; }
-        return data;
+        var d = new byte[Bars.Count * 2];
+        for (int i = 0; i < Bars.Count; i++) { d[2 * i] = Bars[i].Level; d[2 * i + 1] = Bars[i].Color; }
+        return d;
     }
 }

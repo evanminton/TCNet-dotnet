@@ -1,97 +1,81 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
 
 namespace TCNet;
 
-/// <summary>Little-endian field access and fixed-width text helpers used by every packet.</summary>
+/// <summary>Little-endian and fixed-width text field helpers, plus hex dump / parse.</summary>
 public static class Wire
 {
-    public static ushort U16(ReadOnlySpan<byte> p, int offset) => BinaryPrimitives.ReadUInt16LittleEndian(p[offset..]);
-    public static uint U32(ReadOnlySpan<byte> p, int offset) => BinaryPrimitives.ReadUInt32LittleEndian(p[offset..]);
-    public static void U16(Span<byte> p, int offset, ushort value) => BinaryPrimitives.WriteUInt16LittleEndian(p[offset..], value);
-    public static void U32(Span<byte> p, int offset, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(p[offset..], value);
+    public static ushort U16(ReadOnlySpan<byte> p, int o) => BinaryPrimitives.ReadUInt16LittleEndian(p[o..]);
+    public static uint U32(ReadOnlySpan<byte> p, int o) => BinaryPrimitives.ReadUInt32LittleEndian(p[o..]);
+    public static void PutU16(Span<byte> p, int o, ushort v) => BinaryPrimitives.WriteUInt16LittleEndian(p[o..], v);
+    public static void PutU32(Span<byte> p, int o, uint v) => BinaryPrimitives.WriteUInt32LittleEndian(p[o..], v);
 
-    /// <summary>Reads a fixed-width, NUL-padded 8-bit text field (ASCII; bytes ≥ 0x80 read as Latin-1).</summary>
-    public static string Ascii(ReadOnlySpan<byte> p, int offset, int length)
+    private static ReadOnlySpan<byte> UntilNul(ReadOnlySpan<byte> f)
     {
-        var field = p.Slice(offset, length);
-        int end = field.IndexOf((byte)0);
-        if (end >= 0) field = field[..end];
-        return Encoding.Latin1.GetString(field).TrimEnd(' ');
+        int n = f.IndexOf((byte)0);
+        return n >= 0 ? f[..n] : f;
     }
 
-    /// <summary>Writes a fixed-width text field, truncated and NUL padded. Non-Latin-1 characters become '?'.</summary>
-    public static void Ascii(Span<byte> p, int offset, int length, string? value)
+    /// <summary>8-bit text (ASCII; bytes ≥ 0x80 read as Latin-1), NUL/space trimmed.</summary>
+    public static string Ascii(ReadOnlySpan<byte> p, int o, int len) =>
+        Encoding.Latin1.GetString(UntilNul(p.Slice(o, len))).TrimEnd(' ');
+
+    /// <summary>Writes 8-bit text truncated and NUL padded; characters above U+00FF become '?'.</summary>
+    public static void PutAscii(Span<byte> p, int o, int len, string? s)
     {
-        var field = p.Slice(offset, length);
-        field.Clear();
-        if (string.IsNullOrEmpty(value)) return;
-        int n = Math.Min(value.Length, length);
-        for (int i = 0; i < n; i++)
-        {
-            char c = value[i];
-            field[i] = c <= 0xFF ? (byte)c : (byte)'?';
-        }
+        var f = p.Slice(o, len);
+        f.Clear();
+        if (s is null) return;
+        for (int i = 0; i < Math.Min(len, s.Length); i++) f[i] = s[i] <= 0xFF ? (byte)s[i] : (byte)'?';
     }
 
-    /// <summary>Reads a UTF-8 field terminated by NUL or the field end.</summary>
-    public static string Utf8(ReadOnlySpan<byte> p, int offset, int length)
+    public static string Utf8(ReadOnlySpan<byte> p, int o, int len) => Encoding.UTF8.GetString(UntilNul(p.Slice(o, len)));
+
+    /// <summary>Writes UTF-8 without splitting a sequence, NUL padded.</summary>
+    public static void PutUtf8(Span<byte> p, int o, int len, string? s)
     {
-        var field = p.Slice(offset, length);
-        int end = field.IndexOf((byte)0);
-        if (end >= 0) field = field[..end];
-        return Encoding.UTF8.GetString(field);
+        var f = p.Slice(o, len);
+        f.Clear();
+        if (string.IsNullOrEmpty(s)) return;
+        var b = Encoding.UTF8.GetBytes(s);
+        int n = Math.Min(b.Length, len);
+        while (n > 0 && n < b.Length && (b[n] & 0xC0) == 0x80) n--;
+        b.AsSpan(0, n).CopyTo(f);
     }
 
-    /// <summary>Writes UTF-8, never splitting a multi-byte sequence, NUL padded.</summary>
-    public static void Utf8(Span<byte> p, int offset, int length, string? value)
+    public static string Utf16(ReadOnlySpan<byte> p, int o, int len)
     {
-        var field = p.Slice(offset, length);
-        field.Clear();
-        if (string.IsNullOrEmpty(value)) return;
-        var bytes = Encoding.UTF8.GetBytes(value);
-        int n = Math.Min(bytes.Length, length);
-        // Back off to a sequence boundary.
-        while (n > 0 && n < bytes.Length && (bytes[n] & 0xC0) == 0x80) n--;
-        bytes.AsSpan(0, n).CopyTo(field);
-    }
-
-    /// <summary>Reads a UTF-16LE field terminated by a NUL code unit or the field end.</summary>
-    public static string Utf16(ReadOnlySpan<byte> p, int offset, int length)
-    {
-        var field = p.Slice(offset, length & ~1);
-        int units = field.Length / 2;
+        var f = p.Slice(o, len & ~1);
+        int units = f.Length / 2;
         for (int i = 0; i < units; i++)
-        {
-            if (field[2 * i] == 0 && field[2 * i + 1] == 0) { units = i; break; }
-        }
-        return Encoding.Unicode.GetString(field[..(units * 2)]);
+            if (f[2 * i] == 0 && f[2 * i + 1] == 0) { units = i; break; }
+        return Encoding.Unicode.GetString(f[..(units * 2)]);
     }
 
-    /// <summary>Writes UTF-16LE, never splitting a surrogate pair, NUL padded.</summary>
-    public static void Utf16(Span<byte> p, int offset, int length, string? value)
+    /// <summary>Writes UTF-16LE without splitting a surrogate pair, NUL padded.</summary>
+    public static void PutUtf16(Span<byte> p, int o, int len, string? s)
     {
-        var field = p.Slice(offset, length);
-        field.Clear();
-        if (string.IsNullOrEmpty(value)) return;
-        int maxChars = length / 2;
-        int n = Math.Min(value.Length, maxChars);
-        if (n > 0 && n < value.Length && char.IsHighSurrogate(value[n - 1])) n--;
-        Encoding.Unicode.GetBytes(value.AsSpan(0, n), field);
+        var f = p.Slice(o, len);
+        f.Clear();
+        if (string.IsNullOrEmpty(s)) return;
+        int n = Math.Min(s.Length, len / 2);
+        if (n > 0 && n < s.Length && char.IsHighSurrogate(s[n - 1])) n--;
+        Encoding.Unicode.GetBytes(s.AsSpan(0, n), f);
     }
 
-    /// <summary>Formats bytes as a classic 16-per-row hex dump with offsets and ASCII.</summary>
-    public static string HexDump(ReadOnlySpan<byte> data, int maxBytes = int.MaxValue)
+    /// <summary>16 bytes per row: offset, hex, ASCII.</summary>
+    public static string HexDump(ReadOnlySpan<byte> data, int max = int.MaxValue)
     {
         var sb = new StringBuilder();
-        int len = Math.Min(data.Length, maxBytes);
+        int len = Math.Min(max, data.Length);
         for (int row = 0; row < len; row += 16)
         {
-            sb.Append(row.ToString("X4")).Append("  ");
+            sb.Append(row.ToString("X4", CultureInfo.InvariantCulture)).Append("  ");
             for (int i = 0; i < 16; i++)
             {
-                if (row + i < len) sb.Append(data[row + i].ToString("X2")).Append(' ');
-                else sb.Append("   ");
+                sb.Append(row + i < len ? data[row + i].ToString("X2", CultureInfo.InvariantCulture) + " " : "   ");
                 if (i == 7) sb.Append(' ');
             }
             sb.Append(' ');
@@ -106,18 +90,16 @@ public static class Wire
         return sb.ToString();
     }
 
-    /// <summary>Parses "0A 1B ff" / "0a1bff" / "0x0A,0x1B" style hex into bytes.</summary>
-    public static byte[] ParseHex(string hex)
+    /// <summary>Accepts "54 43 4E", "54434e", "0x54,0x43" and similar.</summary>
+    public static byte[] ParseHex(string text)
     {
-        var clean = new StringBuilder(hex.Length);
-        var s = hex.Replace("0x", "", StringComparison.OrdinalIgnoreCase);
-        foreach (char c in s)
-        {
-            if (Uri.IsHexDigit(c)) clean.Append(c);
-            else if (!char.IsWhiteSpace(c) && c is not (',' or ':' or '-'))
-                throw new FormatException($"'{c}' is not a hex digit.");
-        }
-        if (clean.Length % 2 != 0) throw new FormatException("Hex string has an odd number of digits.");
-        return Convert.FromHexString(clean.ToString());
+        var sb = new StringBuilder(text.Length);
+        foreach (char c in text.Replace("0x", " ", StringComparison.OrdinalIgnoreCase))
+            if (Uri.IsHexDigit(c)) sb.Append(c);
+        if (sb.Length % 2 != 0) throw new FormatException("Odd number of hex digits.");
+        return Convert.FromHexString(sb.ToString());
     }
+
+    internal static string Hex(ReadOnlySpan<byte> b, int max = 32) =>
+        Convert.ToHexString(b[..Math.Min(max, b.Length)]) + (b.Length > max ? "…" : "");
 }

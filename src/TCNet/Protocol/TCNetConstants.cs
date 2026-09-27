@@ -1,106 +1,71 @@
 namespace TCNet;
 
-/// <summary>Fixed values from the TCNet Link Specification V3.5.1B.</summary>
+/// <summary>Values fixed by the TCNet Link Specification V3.5.1B.</summary>
 public static class TCNetConstants
 {
-    // ---- Ports (spec: "NETWORK PORTS" / "NETWORK PARTICIPATION") ----
-
-    /// <summary>Broadcast port for Opt-IN / Opt-OUT / Status and broadcast text/keyboard/app data.</summary>
+    /// <summary>Broadcast port: Opt-IN, Opt-OUT, Status, broadcast Text/Keyboard and type 213 application data.</summary>
     public const int BroadcastPort = 60000;
 
-    /// <summary>Broadcast port for TCNet Time Packets (and broadcast Application Specific Data, type 30).</summary>
+    /// <summary>Broadcast port for Time packets and broadcast type 30 application data.</summary>
     public const int TimePort = 60001;
 
-    /// <summary>Third broadcast listener port named in "Network participation – second step".</summary>
+    /// <summary>Third broadcast listener port ("open a listener on port 60000, 60001, 60002").</summary>
     public const int ApplicationPort = 60002;
 
-    /// <summary>Lowest unicast listener port.</summary>
-    public const int UnicastPortMin = 65023;
+    /// <summary>Unicast listener port range 65023–65535 (default 65023).</summary>
+    public const int UnicastPortMin = 65023, UnicastPortMax = 65535;
 
-    /// <summary>Highest unicast listener port.</summary>
-    public const int UnicastPortMax = 65535;
+    public const byte ProtocolMajor = 3;
+    public const byte ProtocolMinor = 5;
 
-    /// <summary>Default unicast listener port.</summary>
-    public const int DefaultUnicastPort = 65023;
+    /// <summary>"TCN" at bytes 4–6 of every packet.</summary>
+    public static ReadOnlySpan<byte> Magic => "TCN"u8;
 
-    // ---- Protocol ----
+    /// <summary>Management header length (bytes 0–23).</summary>
+    public const int HeaderLength = 24;
 
-    /// <summary>Protocol version implemented by this library (3.5).</summary>
-    public const byte ProtocolVersionMajor = 3;
+    /// <summary>Payload offset of Control, Text, Keyboard, chunked and application data packets.</summary>
+    public const int PayloadOffset = 42;
 
-    /// <inheritdoc cref="ProtocolVersionMajor"/>
-    public const byte ProtocolVersionMinor = 5;
-
-    /// <summary>The three header bytes at offset 4: "TCN".</summary>
-    public static ReadOnlySpan<byte> HeaderMagic => "TCN"u8;
-
-    /// <summary>Management header size (bytes 0–23) shared by every packet.</summary>
-    public const int ManagementHeaderSize = 24;
-
-    /// <summary>Length of the Node Name field.</summary>
     public const int NodeNameLength = 8;
-
-    /// <summary>Number of layers carried by Status / Time packets (1, 2, 3, 4, A, B, M, C).</summary>
     public const int LayerCount = 8;
 
-    // ---- Packet sizes (the "Size" row of each packet table) ----
+    public const int OptInLength = 68;
+    public const int OptOutLength = 28;
+    public const int StatusLength = 300;
+    public const int TimeSyncLength = 32;
+    public const int ErrorNotificationLength = 30;
+    public const int RequestLength = 26;
+    public const int KeyboardLength = 44;
+    public const int MetricsLength = 122;
+    public const int MetadataLength = 548;
+    public const int SmallWaveformLength = 2442;
+    public const int MixerLength = 270;
+    public const int TimeLength = 162;
 
-    public const int OptInSize = 68;
-    public const int OptOutSize = 28;
-    public const int StatusSize = 300;
-    public const int TimeSyncSize = 32;
-    public const int ErrorNotificationSize = 30;
-    public const int RequestSize = 26;
-    /// <summary>Control / Text / Keyboard / chunked data header size; payload starts at byte 42.</summary>
-    public const int PayloadHeaderSize = 42;
-    public const int KeyboardDataSize = 44;
-    public const int MetricsDataSize = 122;
-    public const int MetadataSize = 548;
-    public const int SmallWaveformSize = 2442;
-    public const int MixerDataSize = 270;
-    public const int TimeSize = 162;
+    /// <summary>Small waveform data: 1200 bars × (level, colour).</summary>
+    public const int SmallWaveformDataLength = 2400;
 
-    /// <summary>Small waveform payload: 1200 bars × (level, color).</summary>
-    public const int SmallWaveformDataSize = 2400;
+    /// <summary>Beat grid: at most 2400 data bytes per packet (300 entries of 8 bytes).</summary>
+    public const int BeatGridCluster = 2400;
 
-    /// <summary>Beat grid: max data bytes per packet (spec: "maximum of 2400 bytes of Data").</summary>
-    public const int BeatGridClusterSize = 2400;
+    /// <summary>Big waveform and artwork: standard cluster size.</summary>
+    public const int FileCluster = 4800;
 
-    /// <summary>Big waveform / artwork: standard data cluster size.</summary>
-    public const int BigWaveformClusterSize = 4800;
+    public const int BeatGridEntryLength = 8;
+    public const int MetadataTextLength = 256;
 
-    /// <inheritdoc cref="BigWaveformClusterSize"/>
-    public const int ArtworkClusterSize = 4800;
+    /// <summary>Application data "Packet Signature": 178260640 (0x0AA00AA0).</summary>
+    public const uint ApplicationSignature = 178260640;
 
-    /// <summary>Beat grid entry size (beat number u16, type u8, reserved u8, timestamp u32).</summary>
-    public const int BeatGridEntrySize = 8;
+    /// <summary>Header timestamps are microseconds 0–999999.</summary>
+    public const uint MicrosPerSecond = 1_000_000;
 
-    /// <summary>Metadata artist/title field size in bytes.</summary>
-    public const int MetadataTextSize = 256;
+    /// <summary>Opt-IN uptime rolls over every 12 hours.</summary>
+    public const int UptimeRollover = 43_200;
 
-    /// <summary>Application Specific Data "Packet Signature" constant (178260640 = 0x0AA00AA0).</summary>
-    public const uint ApplicationDataSignature = 178260640;
-
-    // ---- Timing ----
-
-    /// <summary>Timestamps run 0–999999 µs and wrap each second.</summary>
-    public const uint TimestampModulo = 1_000_000;
-
-    /// <summary>Opt-IN uptime rolls over every 12 hours (0–43199 s).</summary>
-    public const int UptimeRolloverSeconds = 43_200;
-
-    /// <summary>Opt-IN / Status broadcast interval.</summary>
-    public static readonly TimeSpan OptInInterval = TimeSpan.FromMilliseconds(1000);
-
-    /// <summary>Max value of Metrics track length / position in ms (0x5265C00 = 24 h).</summary>
-    public const uint MaxMetricsTimeMs = 0x5265C00;
-
-    /// <summary>Max value of Time packet layer times in ms (0x55D4A80 = 25 h).</summary>
-    public const uint MaxLayerTimeMs = 0x55D4A80;
-
-    /// <summary>Speed / pitch bend value representing 100 % (spec: 32768 = 100 %).</summary>
+    /// <summary>Speed / pitch value for 100 %.</summary>
     public const int SpeedUnity = 32768;
 
-    /// <summary>First protocol version whose metadata strings are UTF-16 (3.5.0).</summary>
-    public static readonly Version Utf16MetadataVersion = new(3, 5);
+    public static readonly TimeSpan OptInInterval = TimeSpan.FromSeconds(1);
 }

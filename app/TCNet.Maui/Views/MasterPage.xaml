@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             x:Class="TCNet.Maui.Views.MasterPage"
+             x:DataType="vm:MasterViewModel"
+             Title="Master">
+    <Grid RowDefinitions="Auto,*" Padding="12" RowSpacing="8">
+        <Label Text="{Binding Header}" Style="{StaticResource Caption}" />
+        <CollectionView Grid.Row="1" ItemsSource="{Binding Decks}" SelectionMode="None">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="vm:DeckRow">
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+                        <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+                            <Label Text="{Binding Name}" Style="{StaticResource Heading}" />
+                            <Label Grid.Column="1" Text="{Binding Line}" VerticalOptions="Center" />
+                            <HorizontalStackLayout Grid.Row="1" Grid.Column="1" Spacing="6">
+                                <Button Text="Load" Command="{Binding LoadCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
+                                <Button Text="Play" Command="{Binding PlayCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
+                                <Button Text="Pause" Command="{Binding PauseCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
+                                <Button Text="Stop" Command="{Binding StopCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
+                                <Button Text="On air" Command="{Binding AirCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
+                            </HorizontalStackLayout>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

@@ -2,16 +2,15 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>TCNet</RootNamespace>
-    <AssemblyName>TCNet</AssemblyName>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <PackageId>TCNet</PackageId>
-    <Description>TCNet Link Specification V3.5.1B for .NET 10 / .NET MAUI: every packet type, chunk reassembly, node discovery and population list, time sync, data requests, time packet generation and human-readable option catalogs.</Description>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>tcnet;timecode;pioneer;showkontrol;dj;maui</PackageTags>
+    <Description>TCNet Link Specification V3.5.1B for .NET 10: every packet type with field-level human-readable descriptions, chunk reassembly, node discovery, time sync, data requests, control, time packet streaming and master election.</Description>
+    <PackageTags>tcnet;timecode;pioneer;showkontrol;dj;lighting;maui</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/evanminton/TCNet-dotnet</RepositoryUrl>
   </PropertyGroup>
   <ItemGroup>

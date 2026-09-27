@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             x:Class="TCNet.Maui.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel"
+             Title="Settings">
+    <ScrollView>
+        <VerticalStackLayout Padding="12" Spacing="10" MaximumWidthRequest="900" HorizontalOptions="Start">
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="Node" Style="{StaticResource Heading}" />
+                    <Label Text="{Binding App.Status}" Style="{StaticResource Caption}" />
+                    <HorizontalStackLayout Spacing="8">
+                        <Button Text="Start" Command="{Binding StartCommand}" />
+                        <Button Text="Stop" Command="{Binding StopCommand}" />
+                        <Button Text="Apply and restart" Command="{Binding ApplyCommand}" />
+                    </HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+                    <Label Text="Node Name (8 ASCII)" VerticalOptions="Center" />
+                    <Entry Grid.Column="1" Text="{Binding NodeName}" MaxLength="8" />
+                    <Label Grid.Row="1" Text="Node ID (1–65535)" VerticalOptions="Center" />
+                    <Entry Grid.Row="1" Grid.Column="1" Text="{Binding NodeId}" Keyboard="Numeric" />
+                    <Label Grid.Row="2" Text="Node Type" VerticalOptions="Center" />
+                    <Picker x:Name="RolePicker" Grid.Row="2" Grid.Column="1" ItemsSource="{Binding Roles}" SelectedItem="{Binding Role}" />
+                    <Label Grid.Row="3" Text="Network interface" VerticalOptions="Center" />
+                    <Picker Grid.Row="3" Grid.Column="1" ItemsSource="{Binding Interfaces}" SelectedItem="{Binding Interface}" />
+                    <Label Grid.Row="4" Text="Unicast listener port" VerticalOptions="Center" />
+                    <Entry Grid.Row="4" Grid.Column="1" Text="{Binding ListenerPort}" Keyboard="Numeric" Placeholder="65023–65535, empty = first free" />
+                    <Label Grid.Row="5" Text="Broadcast address" VerticalOptions="Center" />
+                    <Entry Grid.Row="5" Grid.Column="1" Text="{Binding Broadcast}" Placeholder="empty = from the interface's subnet" />
+                    <Label Grid.Row="6" Text="Time interval (ms)" VerticalOptions="Center" />
+                    <Entry Grid.Row="6" Grid.Column="1" Text="{Binding TimeInterval}" Keyboard="Numeric" Placeholder="1–40, used when simulating a master" />
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="2">
+                    <Label Text="Node Options (header byte 18)" Style="{StaticResource Heading}" />
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding OptAuth}" /><Label Text="1 · Need authentication" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding OptTcncm}" /><Label Text="2 · Supports TCNCM (Control Messages)" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding OptTcnasdp}" /><Label Text="4 · Supports TCNASDP (Application Specific Data)" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding OptDnd}" /><Label Text="8 · Do not disturb / sleeping" VerticalOptions="Center" /></HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="2">
+                    <Label Text="Behaviour" Style="{StaticResource Heading}" />
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding AutoMetadata}" /><Label Text="Request Metadata when a track changes" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding AutoMetrics}" /><Label Text="Request Metrics every second" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding AutoWaveform}" /><Label Text="Request the small waveform when a track loads (Live page)" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding AutoTimeSync}" /><Label Text="Time sync with masters (message type 10)" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding Election}" /><Label Text="Take part in auto master election (Node Type 'Auto')" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <HorizontalStackLayout><CheckBox IsChecked="{Binding Simulate}" /><Label Text="Simulate a master: stream Time, send Status, answer requests and control (Master page)" VerticalOptions="Center" /></HorizontalStackLayout>
+                    <Label Text="Changes take effect after 'Apply and restart'." Style="{StaticResource Caption}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="2">
+                    <Label Text="Log" Style="{StaticResource Heading}" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding App.Log}">
+                        <BindableLayout.EmptyView>
+                            <Label Text="Nothing logged yet." Style="{StaticResource Caption}" />
+                        </BindableLayout.EmptyView>
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <Label Text="{Binding .}" Style="{StaticResource Mono}" />
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

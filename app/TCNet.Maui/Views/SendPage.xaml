@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             xmlns:tc="clr-namespace:TCNet;assembly=TCNet"
+             x:Class="TCNet.Maui.Views.SendPage"
+             x:DataType="vm:SendViewModel"
+             Title="Send">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Padding="12" RowSpacing="8">
+        <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8">
+            <Label Text="Packet type" VerticalOptions="Center" />
+            <Picker x:Name="TypePicker" Grid.Column="1" ItemsSource="{Binding Types}" SelectedItem="{Binding Type}" />
+            <Button Grid.Column="2" Text="Rebuild" Command="{Binding BuildCommand}" />
+        </Grid>
+        <Label Grid.Row="1" Style="{StaticResource Caption}"
+               Text="The packet is built with this node's header (or the demo playback for Time and Status). Edit the hex freely, press Decode to see what it means, then send it to a broadcast port, a node or any ip:port." />
+        <Editor Grid.Row="2" Text="{Binding Hex}" HeightRequest="110" FontFamily="Consolas" AutoSize="Disabled" />
+        <Grid Grid.Row="3" ColumnDefinitions="110,200,*,Auto,Auto,Auto" ColumnSpacing="8">
+            <Label Text="Target" VerticalOptions="Center" />
+            <Picker Grid.Column="1" ItemsSource="{Binding Targets}" SelectedItem="{Binding Target}" Focused="OnTargetsFocused" />
+            <Entry Grid.Column="2" Text="{Binding Target}" Placeholder="bcast:60000, node:KEY or 192.168.1.20:65023" />
+            <Button Grid.Column="3" Text="Decode" Command="{Binding DecodeCommand}" />
+            <Button Grid.Column="4" Text="Send" Command="{Binding SendCommand}" />
+            <Button Grid.Column="5" Text="Refresh targets" Command="{Binding TargetsCommand}" />
+        </Grid>
+        <VerticalStackLayout Grid.Row="4" Spacing="6">
+            <HorizontalStackLayout Spacing="8">
+                <Label Text="Quick send from this node:" VerticalOptions="Center" />
+                <Button Text="Opt-IN" Command="{Binding OptInCommand}" />
+                <Button Text="Status" Command="{Binding StatusCommand}" />
+                <Button Text="Time" Command="{Binding TimeCommand}" />
+            </HorizontalStackLayout>
+            <Label Text="{Binding Result}" FontAttributes="Bold" />
+        </VerticalStackLayout>
+        <CollectionView Grid.Row="5" ItemsSource="{Binding Fields}" SelectionMode="None">
+            <CollectionView.Header>
+                <Grid ColumnDefinitions="50,40,240,160,*" ColumnSpacing="8">
+                    <Label Text="Offset" FontAttributes="Bold" />
+                    <Label Grid.Column="1" Text="Size" FontAttributes="Bold" />
+                    <Label Grid.Column="2" Text="Field" FontAttributes="Bold" />
+                    <Label Grid.Column="3" Text="Value" FontAttributes="Bold" />
+                    <Label Grid.Column="4" Text="Meaning" FontAttributes="Bold" />
+                </Grid>
+            </CollectionView.Header>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="tc:TCNetField">
+                    <Grid ColumnDefinitions="50,40,240,160,*" ColumnSpacing="8" Padding="0,1">
+                        <Label Text="{Binding Offset}" Style="{StaticResource Caption}" />
+                        <Label Grid.Column="1" Text="{Binding Size}" Style="{StaticResource Caption}" />
+                        <Label Grid.Column="2" Text="{Binding Name}" />
+                        <Label Grid.Column="3" Text="{Binding Value}" Style="{StaticResource Mono}" />
+                        <Label Grid.Column="4" Text="{Binding Meaning}" Style="{StaticResource Caption}" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

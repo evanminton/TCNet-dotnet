@@ -2,489 +2,451 @@ using TCNet.Text;
 
 namespace TCNet;
 
-/// <summary>Type 200 – Data packet. Byte 24 is the data type, byte 25 the layer (or mixer ID).</summary>
+/// <summary>Type 200 · Data. Byte 24 = data type, byte 25 = layer (mixer ID for mixer data).</summary>
 public abstract class DataPacket : TCNetPacket
 {
     public override MessageType MessageType => MessageType.Data;
-
-    /// <summary>Data type at byte 24.</summary>
     public abstract DataType DataType { get; }
 
-    /// <summary>Raw layer byte at 25 (1–8).</summary>
+    /// <summary>Layer 1–8 at byte 25.</summary>
     public byte LayerId { get; set; }
 
-    /// <summary>Layer at byte 25.</summary>
-    public TCNetLayer Layer
-    {
-        get => (TCNetLayer)LayerId;
-        set => LayerId = (byte)value;
-    }
-
-    protected sealed override void WriteBody(Span<byte> p)
+    protected sealed override void Encode(Span<byte> p)
     {
         p[24] = (byte)DataType;
         p[25] = LayerId;
-        WriteData(p);
+        EncodeData(p);
     }
 
-    protected internal sealed override void ReadBody(ReadOnlySpan<byte> p, int receivedLength)
+    protected internal sealed override void Decode(ReadOnlySpan<byte> p, int datagramLength)
     {
         LayerId = p[25];
-        ReadData(p, receivedLength);
+        DecodeData(p, datagramLength);
     }
 
     protected sealed override void DescribeBody(List<TCNetField> f)
     {
         f.Add(new(24, 1, "Data Type", ((byte)DataType).ToString(), TCNetText.Describe(DataType)));
-        f.Add(new(25, 1, LayerFieldName, LayerId.ToString(), this is MixerDataPacket ? null : TCNetText.LayerName(LayerId)));
+        f.Add(this is MixerDataPacket
+            ? new(25, 1, "Mixer ID", LayerId.ToString())
+            : new(25, 1, "Layer ID", LayerId.ToString(), $"layer {TCNetText.LayerName(LayerId)}"));
         DescribeData(f);
     }
 
-    protected virtual string LayerFieldName => "Layer ID";
-
-    protected abstract void WriteData(Span<byte> p);
-    protected abstract void ReadData(ReadOnlySpan<byte> p, int receivedLength);
+    protected abstract void EncodeData(Span<byte> p);
+    protected abstract void DecodeData(ReadOnlySpan<byte> p, int datagramLength);
     protected abstract void DescribeData(List<TCNetField> f);
+
+    public override string Summary => $"layer {TCNetText.LayerName(LayerId)}";
 }
 
-/// <summary>Data type 2 – Metrics (122 bytes). Unicast when the cache changes, or on request.</summary>
-public sealed class MetricsDataPacket : DataPacket
+/// <summary>Data type 2 · Metrics (122 bytes).</summary>
+public sealed class MetricsPacket : DataPacket
 {
     public override DataType DataType => DataType.Metrics;
-    public override string Name => "Data – Metrics";
-    public override int Length => TCNetConstants.MetricsDataSize;
+    public override string Name => "Data · Metrics";
+    public override int Length => TCNetConstants.MetricsLength;
 
-    public LayerState LayerState { get; set; }
-
+    public LayerState State { get; set; }
     /// <summary>0 = slave, 1 = master.</summary>
     public byte SyncMaster { get; set; }
-
-    /// <summary>Beat marker 1–4 (0 = unknown).</summary>
+    /// <summary>1–4 (0 = unknown).</summary>
     public byte BeatMarker { get; set; }
-
-    /// <summary>Total track length in ms.</summary>
-    public uint TrackLength { get; set; }
-
-    /// <summary>Play head position in ms.</summary>
-    public uint CurrentPosition { get; set; }
-
-    /// <summary>Play head speed, 32768 = 100 %.</summary>
+    public uint TrackLengthMs { get; set; }
+    public uint PositionMs { get; set; }
+    /// <summary>32768 = 100 %.</summary>
     public uint Speed { get; set; }
-
     public uint BeatNumber { get; set; }
-
-    /// <summary>BPM × 100 (e.g. 12800 = 128.00 BPM).</summary>
-    public uint Bpm { get; set; }
-
-    /// <summary>Pitch / speed bend, 32768 = 100 %.</summary>
+    /// <summary>BPM × 100.</summary>
+    public uint BpmX100 { get; set; }
+    /// <summary>32768 = 100 %.</summary>
     public ushort PitchBend { get; set; }
-
     public uint TrackId { get; set; }
 
-    public double BpmValue
+    public double Bpm
     {
-        get => Bpm / 100.0;
-        set => Bpm = (uint)Math.Round(value * 100);
+        get => BpmX100 / 100.0;
+        set => BpmX100 = (uint)Math.Round(value * 100);
     }
 
-    /// <summary>Speed as a ratio (1.0 = 100 %).</summary>
     public double SpeedRatio => Speed / (double)TCNetConstants.SpeedUnity;
+    public double PitchRatio => PitchBend / (double)TCNetConstants.SpeedUnity;
 
-    /// <summary>Pitch bend as a ratio (1.0 = 100 %).</summary>
-    public double PitchBendRatio => PitchBend / (double)TCNetConstants.SpeedUnity;
-
-    public bool IsSyncMaster => SyncMaster == 1;
-
-    protected override void WriteData(Span<byte> p)
+    protected override void EncodeData(Span<byte> p)
     {
-        p[27] = (byte)LayerState;
+        p[27] = (byte)State;
         p[29] = SyncMaster;
         p[31] = BeatMarker;
-        Wire.U32(p, 32, TrackLength);
-        Wire.U32(p, 36, CurrentPosition);
-        Wire.U32(p, 40, Speed);
-        Wire.U32(p, 57, BeatNumber);
-        Wire.U32(p, 112, Bpm);
-        Wire.U16(p, 116, PitchBend);
-        Wire.U32(p, 118, TrackId);
+        Wire.PutU32(p, 32, TrackLengthMs);
+        Wire.PutU32(p, 36, PositionMs);
+        Wire.PutU32(p, 40, Speed);
+        Wire.PutU32(p, 57, BeatNumber);
+        Wire.PutU32(p, 112, BpmX100);
+        Wire.PutU16(p, 116, PitchBend);
+        Wire.PutU32(p, 118, TrackId);
     }
 
-    protected override void ReadData(ReadOnlySpan<byte> p, int receivedLength)
+    protected override void DecodeData(ReadOnlySpan<byte> p, int datagramLength)
     {
-        LayerState = (LayerState)p[27];
+        State = (LayerState)p[27];
         SyncMaster = p[29];
         BeatMarker = p[31];
-        TrackLength = Wire.U32(p, 32);
-        CurrentPosition = Wire.U32(p, 36);
+        TrackLengthMs = Wire.U32(p, 32);
+        PositionMs = Wire.U32(p, 36);
         Speed = Wire.U32(p, 40);
         BeatNumber = Wire.U32(p, 57);
-        Bpm = Wire.U32(p, 112);
+        BpmX100 = Wire.U32(p, 112);
         PitchBend = Wire.U16(p, 116);
         TrackId = Wire.U32(p, 118);
     }
 
     protected override void DescribeData(List<TCNetField> f)
     {
-        f.Add(new(27, 1, "Layer State", ((byte)LayerState).ToString(), TCNetText.Describe(LayerState)));
+        f.Add(new(27, 1, "Layer State", ((byte)State).ToString(), TCNetText.Describe(State)));
         f.Add(new(29, 1, "Sync Master", SyncMaster.ToString(), SyncMaster == 1 ? "Master" : "Slave"));
-        f.Add(new(31, 1, "Beat Marker", BeatMarker.ToString()));
-        f.Add(new(32, 4, "Track Length", $"{TrackLength} ms", TCNetUnits.FormatMs(TrackLength)));
-        f.Add(new(36, 4, "Current Position", $"{CurrentPosition} ms", TCNetUnits.FormatMs(CurrentPosition)));
-        f.Add(new(40, 4, "Speed", Speed.ToString(), TCNetUnits.FormatPercent(SpeedRatio)));
+        f.Add(new(31, 1, "Beat Marker", BeatMarker.ToString(), BeatMarker == 0 ? "unknown" : $"beat {BeatMarker} of 4"));
+        f.Add(new(32, 4, "Track Length", $"{TrackLengthMs} ms", TCNetUnits.Ms(TrackLengthMs)));
+        f.Add(new(36, 4, "Current Position", $"{PositionMs} ms", TCNetUnits.Ms(PositionMs)));
+        f.Add(new(40, 4, "Speed", Speed.ToString(), TCNetUnits.Percent(SpeedRatio)));
         f.Add(new(57, 4, "Beat Number", BeatNumber.ToString()));
-        f.Add(new(112, 4, "BPM", Bpm.ToString(), $"{BpmValue:0.00} BPM"));
-        f.Add(new(116, 2, "Pitch Bend", PitchBend.ToString(), TCNetUnits.FormatPercent(PitchBendRatio)));
+        f.Add(new(112, 4, "BPM", BpmX100.ToString(), $"{Bpm:0.00} BPM"));
+        f.Add(new(116, 2, "Pitch Bend", PitchBend.ToString(), TCNetUnits.Percent(PitchRatio)));
         f.Add(new(118, 4, "Track ID", TrackId.ToString()));
     }
 
     public override string Summary =>
-        $"L{TCNetText.LayerName(LayerId)} {TCNetText.Short(LayerState)} {TCNetUnits.FormatMs(CurrentPosition)}/{TCNetUnits.FormatMs(TrackLength)} {BpmValue:0.00} BPM beat {BeatMarker}";
+        $"L{TCNetText.LayerName(LayerId)} {TCNetText.Short(State)} {TCNetUnits.Ms(PositionMs)}/{TCNetUnits.Ms(TrackLengthMs)} {Bpm:0.00} BPM beat {BeatMarker}";
 }
 
-/// <summary>How metadata strings are encoded.</summary>
-public enum MetadataEncoding
+/// <summary>Metadata text encoding.</summary>
+public enum TextEncoding
 {
-    /// <summary>UTF-16LE when the packet's protocol version is ≥ 3.5, otherwise UTF-8.</summary>
+    /// <summary>UTF-16LE for protocol ≥ 3.5, UTF-8 before (from the packet's header version).</summary>
     Auto,
     Utf8,
     Utf16,
 }
 
-/// <summary>Data type 4 – Metadata (548 bytes). Artist and title are 256-byte fields.</summary>
+/// <summary>Data type 4 · Metadata (548 bytes). Artist 29–284, title 285–540, key 541, track ID 543.</summary>
 public sealed class MetadataPacket : DataPacket
 {
     public override DataType DataType => DataType.Metadata;
-    public override string Name => "Data – Metadata";
-    public override int Length => TCNetConstants.MetadataSize;
+    public override string Name => "Data · Metadata";
+    public override int Length => TCNetConstants.MetadataLength;
 
-    public string TrackArtist { get; set; } = "";
-    public string TrackTitle { get; set; } = "";
-    public ushort TrackKey { get; set; }
+    public string Artist { get; set; } = "";
+    public string Title { get; set; } = "";
+    public ushort Key { get; set; }
     public uint TrackId { get; set; }
+    public TextEncoding Encoding { get; set; }
 
-    /// <summary>String encoding. Auto follows the header protocol version (V3.5.0+ = UTF-16).</summary>
-    public MetadataEncoding Encoding { get; set; } = MetadataEncoding.Auto;
+    public TextEncoding EffectiveEncoding => Encoding != TextEncoding.Auto ? Encoding : IsUtf16Era ? TextEncoding.Utf16 : TextEncoding.Utf8;
 
-    /// <summary>The encoding actually used for the current header version.</summary>
-    public MetadataEncoding EffectiveEncoding =>
-        Encoding != MetadataEncoding.Auto ? Encoding : UsesUtf16Text ? MetadataEncoding.Utf16 : MetadataEncoding.Utf8;
-
-    protected override void WriteData(Span<byte> p)
+    protected override void EncodeData(Span<byte> p)
     {
-        if (EffectiveEncoding == MetadataEncoding.Utf16)
+        if (EffectiveEncoding == TextEncoding.Utf16)
         {
-            Wire.Utf16(p, 29, TCNetConstants.MetadataTextSize, TrackArtist);
-            Wire.Utf16(p, 285, TCNetConstants.MetadataTextSize, TrackTitle);
+            Wire.PutUtf16(p, 29, 256, Artist);
+            Wire.PutUtf16(p, 285, 256, Title);
         }
         else
         {
-            Wire.Utf8(p, 29, TCNetConstants.MetadataTextSize, TrackArtist);
-            Wire.Utf8(p, 285, TCNetConstants.MetadataTextSize, TrackTitle);
+            Wire.PutUtf8(p, 29, 256, Artist);
+            Wire.PutUtf8(p, 285, 256, Title);
         }
-        Wire.U16(p, 541, TrackKey);
-        Wire.U32(p, 543, TrackId);
+        Wire.PutU16(p, 541, Key);
+        Wire.PutU32(p, 543, TrackId);
     }
 
-    protected override void ReadData(ReadOnlySpan<byte> p, int receivedLength)
+    protected override void DecodeData(ReadOnlySpan<byte> p, int datagramLength)
     {
-        if (EffectiveEncoding == MetadataEncoding.Utf16)
-        {
-            TrackArtist = Wire.Utf16(p, 29, TCNetConstants.MetadataTextSize);
-            TrackTitle = Wire.Utf16(p, 285, TCNetConstants.MetadataTextSize);
-        }
-        else
-        {
-            TrackArtist = Wire.Utf8(p, 29, TCNetConstants.MetadataTextSize);
-            TrackTitle = Wire.Utf8(p, 285, TCNetConstants.MetadataTextSize);
-        }
-        TrackKey = Wire.U16(p, 541);
+        bool utf16 = EffectiveEncoding == TextEncoding.Utf16;
+        Artist = utf16 ? Wire.Utf16(p, 29, 256) : Wire.Utf8(p, 29, 256);
+        Title = utf16 ? Wire.Utf16(p, 285, 256) : Wire.Utf8(p, 285, 256);
+        Key = Wire.U16(p, 541);
         TrackId = Wire.U32(p, 543);
     }
 
     protected override void DescribeData(List<TCNetField> f)
     {
-        var enc = EffectiveEncoding == MetadataEncoding.Utf16 ? "UTF-16" : "UTF-8";
-        f.Add(new(29, 256, "Track Artist", TrackArtist, enc));
-        f.Add(new(285, 256, "Track Title", TrackTitle, enc));
-        f.Add(new(541, 2, "Track Key", TrackKey.ToString()));
+        string enc = EffectiveEncoding == TextEncoding.Utf16 ? "UTF-16" : "UTF-8";
+        f.Add(new(29, 256, "Track Artist", Artist, enc));
+        f.Add(new(285, 256, "Track Title", Title, enc));
+        f.Add(new(541, 2, "Track Key", Key.ToString()));
         f.Add(new(543, 4, "Track ID", TrackId.ToString()));
     }
 
-    public override string Summary => $"L{TCNetText.LayerName(LayerId)} {TrackArtist} – {TrackTitle} (#{TrackId})";
+    public override string Summary => $"L{TCNetText.LayerName(LayerId)} {Artist} – {Title} (#{TrackId})";
 }
 
-/// <summary>A cue colour (byte 1 = red, 2 = green, 3 = blue).</summary>
-public readonly record struct CueColor(byte Red, byte Green, byte Blue)
+public readonly record struct CueColor(byte R, byte G, byte B)
 {
-    public override string ToString() => $"#{Red:X2}{Green:X2}{Blue:X2}";
+    public override string ToString() => $"#{R:X2}{G:X2}{B:X2}";
 }
 
-/// <summary>One hot/memory cue in a Cue Data packet.</summary>
-public sealed class CuePoint
+public sealed class Cue
 {
     public byte Type { get; set; }
-    public uint InTime { get; set; }
-    public uint OutTime { get; set; }
+    public uint InMs { get; set; }
+    public uint OutMs { get; set; }
     public CueColor Color { get; set; }
-
-    public bool IsEmpty => Type == 0 && InTime == 0 && OutTime == 0 && Color == default;
+    public bool IsEmpty => Type == 0 && InMs == 0 && OutMs == 0 && Color == default;
 }
 
 /// <summary>
-/// Data type 12 – Cue Data. Loop IN (42), Loop OUT (46) and 18 cues of 22 bytes each:
-/// type (+0), in time (+2), out time (+6), colour RGB (+11).
+/// Data type 12 · Cue Data: Loop IN (42), Loop OUT (46) and 18 cues of 22 bytes (type +0, in +2, out +6, RGB +11).
 /// </summary>
 /// <remarks>
-/// The spec places cue 1 at byte 47, which overlaps Loop OUT (46–49); see <see cref="CueTableLayout"/>.
+/// The spec prints cue 1 at 47, overlapping Loop OUT (46–49). With <see cref="CueLayout.Printed"/> an empty cue 1 is not
+/// written so Loop OUT survives; a set cue 1 owns bytes 47–49. When reading, bytes 47–49 count as cue 1 when cue 1 has other
+/// non-zero bytes, or when they look like a cue on their own (bytes 46 and 48 zero, a type at 47); otherwise they are Loop OUT.
 /// </remarks>
 public sealed class CueDataPacket : DataPacket
 {
-    public const int CueCount = 18;
-    public const int CueStride = 22;
+    public const int CueCount = 18, Stride = 22;
 
-    /// <summary>Layout used by new instances and by the parser. Defaults to the literal spec offsets.</summary>
-    public static CueTableLayout DefaultLayout { get; set; } = CueTableLayout.Specification;
+    /// <summary>Layout for new instances (and the parser).</summary>
+    public static CueLayout DefaultLayout { get; set; } = CueLayout.Printed;
 
     public CueDataPacket()
     {
-        for (int i = 0; i < Cues.Length; i++) Cues[i] = new CuePoint();
+        for (int i = 0; i < CueCount; i++) Cues[i] = new Cue();
     }
 
     public override DataType DataType => DataType.CueData;
-    public override string Name => "Data – Cue Data";
+    public override string Name => "Data · Cue Data";
+    public CueLayout Layout { get; set; } = DefaultLayout;
+    public int FirstCueOffset => Layout == CueLayout.AfterLoop ? 50 : 47;
+    public override int Length => FirstCueOffset + CueCount * Stride;
 
-    public CueTableLayout Layout { get; set; } = DefaultLayout;
+    public uint LoopInMs { get; set; }
+    public uint LoopOutMs { get; set; }
+    public Cue[] Cues { get; } = new Cue[CueCount];
 
-    /// <summary>Offset of cue 1's type byte for the current layout (47 or 50).</summary>
-    public int CueTableOffset => Layout == CueTableLayout.AfterLoop ? 50 : 47;
+    /// <summary>True when a set cue 1 occupied bytes 47–49, so Loop OUT could not be read.</summary>
+    public bool LoopOutOverlapped { get; private set; }
 
-    public override int Length => CueTableOffset + CueCount * CueStride;
-
-    public uint LoopIn { get; set; }
-    public uint LoopOut { get; set; }
-    public CuePoint[] Cues { get; } = new CuePoint[CueCount];
-
-    protected override void WriteData(Span<byte> p)
+    protected override void EncodeData(Span<byte> p)
     {
-        // Loop fields first, then cues: with the spec layout a non-empty cue 1 wins the overlapping
-        // bytes 47–49; an empty cue 1 is not written so Loop OUT survives.
-        Wire.U32(p, 42, LoopIn);
-        Wire.U32(p, 46, LoopOut);
+        Wire.PutU32(p, 42, LoopInMs);
+        Wire.PutU32(p, 46, LoopOutMs);
         for (int i = 0; i < CueCount; i++)
         {
-            int o = CueTableOffset + i * CueStride;
             var c = Cues[i];
-            if (c.IsEmpty) continue;
+            if (i == 0 && Layout == CueLayout.Printed && c.IsEmpty) continue;
+            int o = FirstCueOffset + i * Stride;
             p[o] = c.Type;
-            Wire.U32(p, o + 2, c.InTime);
-            Wire.U32(p, o + 6, c.OutTime);
-            p[o + 11] = c.Color.Red;
-            p[o + 12] = c.Color.Green;
-            p[o + 13] = c.Color.Blue;
+            p[o + 1] = 0;
+            Wire.PutU32(p, o + 2, c.InMs);
+            Wire.PutU32(p, o + 6, c.OutMs);
+            p[o + 11] = c.Color.R;
+            p[o + 12] = c.Color.G;
+            p[o + 13] = c.Color.B;
         }
     }
 
-    protected override void ReadData(ReadOnlySpan<byte> p, int receivedLength)
+    protected override void DecodeData(ReadOnlySpan<byte> p, int datagramLength)
     {
-        LoopIn = Wire.U32(p, 42);
-        LoopOut = Wire.U32(p, 46);
+        LoopInMs = Wire.U32(p, 42);
+        LoopOutMs = Wire.U32(p, 46);
+        LoopOutOverlapped = false;
         for (int i = 0; i < CueCount; i++)
         {
-            int o = CueTableOffset + i * CueStride;
+            int o = FirstCueOffset + i * Stride;
             var c = Cues[i];
-            if (i == 0 && Layout == CueTableLayout.Specification && !p.Slice(o + 3, CueStride - 3).ContainsAnyExcept((byte)0)
-                && !(p[46] == 0 && p[48] == 0 && p[47] != 0))
+            if (i == 0 && Layout == CueLayout.Printed)
             {
-                // Only bytes shared with Loop OUT (47–49) are set. A written cue 1 leaves byte 48 at 0 and, with no
-                // loop, byte 46 too, with its type at 47 (a hot cue near 0 ms). Anything else is Loop OUT and cue 1
-                // is empty. (A Loop OUT under 65.5 s that is a multiple of 256 ms is read as a cue.)
-                c.Type = 0; c.InTime = 0; c.OutTime = 0; c.Color = default;
-                continue;
+                bool restSet = p.Slice(50, 19).IndexOfAnyExcept((byte)0) >= 0;
+                bool looksLikeCue = p[46] == 0 && p[47] != 0 && p[48] == 0;
+                if (!restSet && !looksLikeCue)
+                {
+                    c.Type = 0; c.InMs = 0; c.OutMs = 0; c.Color = default;
+                    continue;
+                }
+                LoopOutOverlapped = restSet;
+                if (!restSet) LoopOutMs = 0;
             }
             c.Type = p[o];
-            c.InTime = Wire.U32(p, o + 2);
-            c.OutTime = Wire.U32(p, o + 6);
+            c.InMs = Wire.U32(p, o + 2);
+            c.OutMs = Wire.U32(p, o + 6);
             c.Color = new CueColor(p[o + 11], p[o + 12], p[o + 13]);
         }
     }
 
     protected override void DescribeData(List<TCNetField> f)
     {
-        f.Add(new(42, 4, "Loop IN", $"{LoopIn} ms", TCNetUnits.FormatMs(LoopIn)));
-        f.Add(new(46, 4, "Loop OUT", $"{LoopOut} ms", TCNetUnits.FormatMs(LoopOut)));
+        f.Add(new(42, 4, "Loop IN", $"{LoopInMs} ms", TCNetUnits.Ms(LoopInMs)));
+        f.Add(new(46, 4, "Loop OUT", $"{LoopOutMs} ms", LoopOutOverlapped ? "shares bytes 47–49 with cue 1" : TCNetUnits.Ms(LoopOutMs)));
         for (int i = 0; i < CueCount; i++)
         {
             var c = Cues[i];
             if (c.IsEmpty) continue;
-            int o = CueTableOffset + i * CueStride;
+            int o = FirstCueOffset + i * Stride;
             f.Add(new(o, 1, $"CUE {i + 1} Type", c.Type.ToString()));
-            f.Add(new(o + 2, 4, $"CUE {i + 1} IN", $"{c.InTime} ms", TCNetUnits.FormatMs(c.InTime)));
-            f.Add(new(o + 6, 4, $"CUE {i + 1} OUT", $"{c.OutTime} ms", TCNetUnits.FormatMs(c.OutTime)));
-            f.Add(new(o + 11, 3, $"CUE {i + 1} Color", c.Color.ToString()));
+            f.Add(new(o + 2, 4, $"CUE {i + 1} IN", $"{c.InMs} ms", TCNetUnits.Ms(c.InMs)));
+            f.Add(new(o + 6, 4, $"CUE {i + 1} OUT", $"{c.OutMs} ms", TCNetUnits.Ms(c.OutMs)));
+            f.Add(new(o + 11, 3, $"CUE {i + 1} Color", c.Color.ToString(), "red, green, blue"));
         }
     }
 
-    public override string Summary => $"L{TCNetText.LayerName(LayerId)} loop {LoopIn}–{LoopOut} ms, {Cues.Count(c => !c.IsEmpty)} cues";
+    public override string Summary => $"L{TCNetText.LayerName(LayerId)} loop {LoopInMs}–{LoopOutMs} ms, {Cues.Count(c => !c.IsEmpty)} cues";
 }
 
-/// <summary>One of the six mixer channel strips (24 bytes from 125 + 24 × index).</summary>
+/// <summary>One of six mixer channel strips (24 bytes from 125 + 24 × (n − 1)).</summary>
 public sealed class MixerChannel
 {
-    private readonly byte[] _raw;
-    private readonly int _o;
+    private readonly byte[] _b;
 
-    internal MixerChannel(byte[] raw, int number)
+    internal MixerChannel(byte[] buffer, int number)
     {
-        _raw = raw;
+        _b = buffer;
         Number = number;
-        _o = 125 + 24 * (number - 1);
+        Offset = 125 + 24 * (number - 1);
     }
 
-    /// <summary>Channel number 1–6.</summary>
     public int Number { get; }
-    internal int Offset => _o;
+    public int Offset { get; }
 
-    public ChannelSource SourceSelect { get => (ChannelSource)_raw[_o]; set => _raw[_o] = (byte)value; }
-    public byte AudioLevel { get => _raw[_o + 1]; set => _raw[_o + 1] = value; }
-    public byte FaderLevel { get => _raw[_o + 2]; set => _raw[_o + 2] = value; }
-    public byte TrimLevel { get => _raw[_o + 3]; set => _raw[_o + 3] = value; }
-    public byte CompLevel { get => _raw[_o + 4]; set => _raw[_o + 4] = value; }
-    public byte EqHi { get => _raw[_o + 5]; set => _raw[_o + 5] = value; }
-    public byte EqHiMid { get => _raw[_o + 6]; set => _raw[_o + 6] = value; }
-    public byte EqLowMid { get => _raw[_o + 7]; set => _raw[_o + 7] = value; }
-    public byte EqLow { get => _raw[_o + 8]; set => _raw[_o + 8] = value; }
-    public byte FilterColor { get => _raw[_o + 9]; set => _raw[_o + 9] = value; }
-    public byte Send { get => _raw[_o + 10]; set => _raw[_o + 10] = value; }
-    public bool CueA { get => _raw[_o + 11] != 0; set => _raw[_o + 11] = value ? (byte)1 : (byte)0; }
-    public bool CueB { get => _raw[_o + 12] != 0; set => _raw[_o + 12] = value ? (byte)1 : (byte)0; }
-    public CrossfaderAssign CrossfaderAssign { get => (CrossfaderAssign)_raw[_o + 13]; set => _raw[_o + 13] = (byte)value; }
+    private byte this[int i] { get => _b[Offset + i]; set => _b[Offset + i] = value; }
+
+    public ChannelSource Source { get => (ChannelSource)this[0]; set => this[0] = (byte)value; }
+    public byte AudioLevel { get => this[1]; set => this[1] = value; }
+    public byte FaderLevel { get => this[2]; set => this[2] = value; }
+    public byte TrimLevel { get => this[3]; set => this[3] = value; }
+    public byte CompLevel { get => this[4]; set => this[4] = value; }
+    public byte EqHi { get => this[5]; set => this[5] = value; }
+    public byte EqHiMid { get => this[6]; set => this[6] = value; }
+    public byte EqLowMid { get => this[7]; set => this[7] = value; }
+    public byte EqLow { get => this[8]; set => this[8] = value; }
+    public byte FilterColor { get => this[9]; set => this[9] = value; }
+    public byte Send { get => this[10]; set => this[10] = value; }
+    public bool CueA { get => this[11] != 0; set => this[11] = value ? (byte)1 : (byte)0; }
+    public bool CueB { get => this[12] != 0; set => this[12] = value ? (byte)1 : (byte)0; }
+    public CrossfaderAssign CrossfaderAssign { get => (CrossfaderAssign)this[13]; set => this[13] = (byte)value; }
+
+    internal static readonly string[] FieldNames =
+    [
+        "Source Select", "Audio Level", "Fader Level", "Trim Level", "Comp Level", "EQ Hi Level", "EQ Hi Mid Level",
+        "EQ Low Mid Level", "EQ Low Level", "Filter/Color", "Send", "CUE A", "CUE B", "Crossfader Assign",
+    ];
 }
 
-/// <summary>Data type 150 – Mixer Data (270 bytes). Byte 25 is the mixer ID. Unicast to all slaves.</summary>
+/// <summary>Data type 150 · Mixer Data (270 bytes). Byte 25 is the mixer ID.</summary>
 public sealed class MixerDataPacket : DataPacket
 {
-    private readonly byte[] _raw = new byte[TCNetConstants.MixerDataSize];
+    private readonly byte[] _b = new byte[TCNetConstants.MixerLength];
 
     public MixerDataPacket()
     {
-        Channels = Enumerable.Range(1, 6).Select(n => new MixerChannel(_raw, n)).ToArray();
+        Channels = Enumerable.Range(1, 6).Select(n => new MixerChannel(_b, n)).ToArray();
         SendReturn3Source = MixerChannelSelect.None;
         SendReturn3Type = SendReturnType.None;
         BeatFxChannel = MixerChannelSelect.None;
     }
 
     public override DataType DataType => DataType.Mixer;
-    public override string Name => "Data – Mixer";
-    public override int Length => TCNetConstants.MixerDataSize;
-    protected override string LayerFieldName => "Mixer ID";
+    public override string Name => "Data · Mixer";
+    public override int Length => TCNetConstants.MixerLength;
 
-    /// <summary>Mixer ID (byte 25, standard 0). Same byte as <see cref="DataPacket.LayerId"/>.</summary>
     public byte MixerId { get => LayerId; set => LayerId = value; }
-
-    public MixerType MixerType { get => (MixerType)_raw[26]; set => _raw[26] = (byte)value; }
-
+    public MixerType MixerType { get => (MixerType)_b[26]; set => _b[26] = (byte)value; }
     public string MixerName { get; set; } = "";
-
-    public byte MicEqHi { get => _raw[59]; set => _raw[59] = value; }
-    public byte MicEqLow { get => _raw[60]; set => _raw[60] = value; }
-    public byte MasterAudioLevel { get => _raw[61]; set => _raw[61] = value; }
-    public byte MasterFaderLevel { get => _raw[62]; set => _raw[62] = value; }
-    public bool LinkCueA { get => _raw[67] != 0; set => _raw[67] = B(value); }
-    public bool LinkCueB { get => _raw[68] != 0; set => _raw[68] = B(value); }
-    public byte MasterFilter { get => _raw[69]; set => _raw[69] = value; }
-    public bool MasterCueA { get => _raw[71] != 0; set => _raw[71] = B(value); }
-    public bool MasterCueB { get => _raw[72] != 0; set => _raw[72] = B(value); }
-    public bool MasterIsolatorOn { get => _raw[74] != 0; set => _raw[74] = B(value); }
-    public byte MasterIsolatorHi { get => _raw[75]; set => _raw[75] = value; }
-    public byte MasterIsolatorMid { get => _raw[76]; set => _raw[76] = value; }
-    public byte MasterIsolatorLow { get => _raw[77]; set => _raw[77] = value; }
-    public byte FilterHpf { get => _raw[79]; set => _raw[79] = value; }
-    public byte FilterLpf { get => _raw[80]; set => _raw[80] = value; }
-    public byte FilterResonance { get => _raw[81]; set => _raw[81] = value; }
-    public byte SendFxEffect { get => _raw[84]; set => _raw[84] = value; }
-    public bool SendFxExt1 { get => _raw[85] != 0; set => _raw[85] = B(value); }
-    public bool SendFxExt2 { get => _raw[86] != 0; set => _raw[86] = B(value); }
-    public byte SendFxMasterMix { get => _raw[87]; set => _raw[87] = value; }
-    public byte SendFxSizeFeedback { get => _raw[88]; set => _raw[88] = value; }
-    public byte SendFxTime { get => _raw[89]; set => _raw[89] = value; }
-    public byte SendFxHpf { get => _raw[90]; set => _raw[90] = value; }
-    public byte SendFxLevel { get => _raw[91]; set => _raw[91] = value; }
-    public MixerChannelSelect SendReturn3Source { get => (MixerChannelSelect)_raw[92]; set => _raw[92] = (byte)value; }
-    public SendReturnType SendReturn3Type { get => (SendReturnType)_raw[93]; set => _raw[93] = (byte)value; }
-    public bool SendReturn3On { get => _raw[94] != 0; set => _raw[94] = B(value); }
-    public byte SendReturn3Level { get => _raw[95]; set => _raw[95] = value; }
-    public byte ChannelFaderCurve { get => _raw[97]; set => _raw[97] = value; }
-    public byte CrossFaderCurve { get => _raw[98]; set => _raw[98] = value; }
-    public byte CrossFader { get => _raw[99]; set => _raw[99] = value; }
-    public bool BeatFxOn { get => _raw[100] != 0; set => _raw[100] = B(value); }
-    public byte BeatFxLevelDepth { get => _raw[101]; set => _raw[101] = value; }
-    public MixerChannelSelect BeatFxChannel { get => (MixerChannelSelect)_raw[102]; set => _raw[102] = (byte)value; }
-    public byte BeatFxSelect { get => _raw[103]; set => _raw[103] = value; }
-    public byte BeatFxFreqHi { get => _raw[104]; set => _raw[104] = value; }
-    public byte BeatFxFreqMid { get => _raw[105]; set => _raw[105] = value; }
-    public byte BeatFxFreqLow { get => _raw[106]; set => _raw[106] = value; }
-    public byte HeadphonesPreEq { get => _raw[107]; set => _raw[107] = value; }
-    public byte HeadphonesALevel { get => _raw[108]; set => _raw[108] = value; }
-    public byte HeadphonesAMix { get => _raw[109]; set => _raw[109] = value; }
-    public byte HeadphonesBLevel { get => _raw[110]; set => _raw[110] = value; }
-    public byte HeadphonesBMix { get => _raw[111]; set => _raw[111] = value; }
-    public byte BoothLevel { get => _raw[112]; set => _raw[112] = value; }
-    public byte BoothEqHi { get => _raw[113]; set => _raw[113] = value; }
-    public byte BoothEqLow { get => _raw[114]; set => _raw[114] = value; }
-
-    /// <summary>Channel strips 1–6.</summary>
     public IReadOnlyList<MixerChannel> Channels { get; }
 
-    private static byte B(bool v) => v ? (byte)1 : (byte)0;
+    private bool Flag(int o) => _b[o] != 0;
+    private void Flag(int o, bool v) => _b[o] = v ? (byte)1 : (byte)0;
 
-    /// <summary>Raw byte access (offsets as in the spec table).</summary>
+    public byte MicEqHi { get => _b[59]; set => _b[59] = value; }
+    public byte MicEqLow { get => _b[60]; set => _b[60] = value; }
+    public byte MasterAudioLevel { get => _b[61]; set => _b[61] = value; }
+    public byte MasterFaderLevel { get => _b[62]; set => _b[62] = value; }
+    public bool LinkCueA { get => Flag(67); set => Flag(67, value); }
+    public bool LinkCueB { get => Flag(68); set => Flag(68, value); }
+    public byte MasterFilter { get => _b[69]; set => _b[69] = value; }
+    public bool MasterCueA { get => Flag(71); set => Flag(71, value); }
+    public bool MasterCueB { get => Flag(72); set => Flag(72, value); }
+    public bool MasterIsolatorOn { get => Flag(74); set => Flag(74, value); }
+    public byte MasterIsolatorHi { get => _b[75]; set => _b[75] = value; }
+    public byte MasterIsolatorMid { get => _b[76]; set => _b[76] = value; }
+    public byte MasterIsolatorLow { get => _b[77]; set => _b[77] = value; }
+    public byte FilterHpf { get => _b[79]; set => _b[79] = value; }
+    public byte FilterLpf { get => _b[80]; set => _b[80] = value; }
+    public byte FilterResonance { get => _b[81]; set => _b[81] = value; }
+    public byte SendFxEffect { get => _b[84]; set => _b[84] = value; }
+    public bool SendFxExt1 { get => Flag(85); set => Flag(85, value); }
+    public bool SendFxExt2 { get => Flag(86); set => Flag(86, value); }
+    public byte SendFxMasterMix { get => _b[87]; set => _b[87] = value; }
+    public byte SendFxSizeFeedback { get => _b[88]; set => _b[88] = value; }
+    public byte SendFxTime { get => _b[89]; set => _b[89] = value; }
+    public byte SendFxHpf { get => _b[90]; set => _b[90] = value; }
+    public byte SendFxLevel { get => _b[91]; set => _b[91] = value; }
+    public MixerChannelSelect SendReturn3Source { get => (MixerChannelSelect)_b[92]; set => _b[92] = (byte)value; }
+    public SendReturnType SendReturn3Type { get => (SendReturnType)_b[93]; set => _b[93] = (byte)value; }
+    public bool SendReturn3On { get => Flag(94); set => Flag(94, value); }
+    public byte SendReturn3Level { get => _b[95]; set => _b[95] = value; }
+    public byte ChannelFaderCurve { get => _b[97]; set => _b[97] = value; }
+    public byte CrossFaderCurve { get => _b[98]; set => _b[98] = value; }
+    public byte CrossFader { get => _b[99]; set => _b[99] = value; }
+    public bool BeatFxOn { get => Flag(100); set => Flag(100, value); }
+    public byte BeatFxLevel { get => _b[101]; set => _b[101] = value; }
+    public MixerChannelSelect BeatFxChannel { get => (MixerChannelSelect)_b[102]; set => _b[102] = (byte)value; }
+    public byte BeatFxSelect { get => _b[103]; set => _b[103] = value; }
+    public byte BeatFxFreqHi { get => _b[104]; set => _b[104] = value; }
+    public byte BeatFxFreqMid { get => _b[105]; set => _b[105] = value; }
+    public byte BeatFxFreqLow { get => _b[106]; set => _b[106] = value; }
+    public byte HeadphonesPreEq { get => _b[107]; set => _b[107] = value; }
+    public byte HeadphonesALevel { get => _b[108]; set => _b[108] = value; }
+    public byte HeadphonesAMix { get => _b[109]; set => _b[109] = value; }
+    public byte HeadphonesBLevel { get => _b[110]; set => _b[110] = value; }
+    public byte HeadphonesBMix { get => _b[111]; set => _b[111] = value; }
+    public byte BoothLevel { get => _b[112]; set => _b[112] = value; }
+    public byte BoothEqHi { get => _b[113]; set => _b[113] = value; }
+    public byte BoothEqLow { get => _b[114]; set => _b[114] = value; }
+
+    /// <summary>Raw access to data bytes 26–269, except the mixer name (29–44), which has its own property.</summary>
     public byte this[int offset]
     {
-        get => _raw[offset];
+        get => _b[offset];
         set
         {
-            if (offset < 27) throw new ArgumentOutOfRangeException(nameof(offset), "Header bytes are set through properties.");
-            if (offset is >= 29 and < 45) throw new ArgumentOutOfRangeException(nameof(offset), "The mixer name is set through MixerName.");
-            _raw[offset] = value;
+            if (offset < 26 || offset >= TCNetConstants.MixerLength || offset is >= 29 and <= 44)
+                throw new ArgumentOutOfRangeException(nameof(offset), "Use the header properties, MixerId or MixerName.");
+            _b[offset] = value;
         }
     }
 
-    protected override void WriteData(Span<byte> p)
+    protected override void EncodeData(Span<byte> p)
     {
-        _raw.AsSpan(26).CopyTo(p[26..]);
-        Wire.Ascii(p, 29, 16, MixerName);
+        _b.AsSpan(26).CopyTo(p[26..]);
+        Wire.PutAscii(p, 29, 16, MixerName);
     }
 
-    protected override void ReadData(ReadOnlySpan<byte> p, int receivedLength)
+    protected override void DecodeData(ReadOnlySpan<byte> p, int datagramLength)
     {
-        p[..TCNetConstants.MixerDataSize].CopyTo(_raw);
+        p[..TCNetConstants.MixerLength].CopyTo(_b);
+        _b.AsSpan(0, 26).Clear();
         MixerName = Wire.Ascii(p, 29, 16);
+        _b.AsSpan(29, 16).Clear();
     }
 
-    private static readonly (int Offset, string Name)[] MasterFields =
+    internal static readonly (int Offset, string Name)[] MasterFields =
     [
-        (59, "Mic EQ Hi"), (60, "Mic EQ Low"), (61, "Master Audio Level"), (62, "Master Fader Level"),
-        (67, "Link Cue A"), (68, "Link Cue B"), (69, "Master Filter"), (71, "Master CUE A"), (72, "Master CUE B"),
-        (74, "Master Isolator ON/OFF"), (75, "Master Isolator Hi"), (76, "Master Isolator Mid"), (77, "Master Isolator Low"),
-        (79, "Filter HPF"), (80, "Filter LPF"), (81, "Filter Resonance"), (84, "Send FX Effect"), (85, "Send FX Ext 1"),
-        (86, "Send FX Ext 2"), (87, "Send FX Master Mix"), (88, "Send FX Size Feedback"), (89, "Send FX Time"),
-        (90, "Send FX HPF"), (91, "Send FX Level"), (92, "Send Return 3 Source Select"), (93, "Send Return 3 Type"),
-        (94, "Send Return 3 ON/OFF"), (95, "Send Return 3 Level"), (97, "Channel Fader Curve"), (98, "Cross Fader Curve"),
-        (99, "Cross Fader"), (100, "BeatFX ON/OFF"), (101, "BeatFX Level/Depth"), (102, "BeatFX Channel Select"),
-        (103, "BeatFX Select"), (104, "BeatFX Freq Hi"), (105, "BeatFX Freq Mid"), (106, "BeatFX Freq Low"),
-        (107, "Headphones Pre EQ"), (108, "Headphones A Level"), (109, "Headphones A Mix"), (110, "Headphones B Level"),
-        (111, "Headphones B Mix"), (112, "Booth Level"), (113, "Booth EQ Hi"), (114, "Booth EQ Low"),
-    ];
-
-    private static readonly string[] ChannelFieldNames =
-    [
-        "Source Select", "Audio Level", "Fader Level", "Trim Level", "Comp Level", "EQ Hi Level", "EQ Hi Mid Level",
-        "EQ Low Mid Level", "EQ Low Level", "Filter/Color", "Send", "CUE A", "CUE B", "Crossfader Assign",
+        (59, "Mic EQ Hi"), (60, "Mic EQ Low"), (61, "Master Audio Level"), (62, "Master Fader Level"), (67, "Link Cue A"),
+        (68, "Link Cue B"), (69, "Master Filter"), (71, "Master CUE A"), (72, "Master CUE B"), (74, "Master Isolator ON/OFF"),
+        (75, "Master Isolator Hi"), (76, "Master Isolator Mid"), (77, "Master Isolator Low"), (79, "Filter HPF"), (80, "Filter LPF"),
+        (81, "Filter Resonance"), (84, "Send FX Effect"), (85, "Send FX Ext 1"), (86, "Send FX Ext 2"), (87, "Send FX Master Mix"),
+        (88, "Send FX Size Feedback"), (89, "Send FX Time"), (90, "Send FX HPF"), (91, "Send FX Level"),
+        (92, "Send Return 3 Source Select"), (93, "Send Return 3 Type"), (94, "Send Return 3 ON/OFF"), (95, "Send Return 3 Level"),
+        (97, "Channel Fader Curve"), (98, "Cross Fader Curve"), (99, "Cross Fader"), (100, "BeatFX ON/OFF"),
+        (101, "BeatFX Level/Depth"), (102, "BeatFX Channel Select"), (103, "BeatFX Select"), (104, "BeatFX Freq Hi"),
+        (105, "BeatFX Freq Mid"), (106, "BeatFX Freq Low"), (107, "Headphones Pre EQ"), (108, "Headphones A Level"),
+        (109, "Headphones A Mix"), (110, "Headphones B Level"), (111, "Headphones B Mix"), (112, "Booth Level"),
+        (113, "Booth EQ Hi"), (114, "Booth EQ Low"),
     ];
 
     protected override void DescribeData(List<TCNetField> f)
     {
-        f.Add(new(26, 1, "Mixer Type", _raw[26].ToString(), TCNetText.Describe(MixerType)));
+        f.Add(new(26, 1, "Mixer Type", _b[26].ToString(), TCNetText.Describe(MixerType)));
         f.Add(new(29, 16, "Mixer Name", MixerName));
         foreach (var (o, n) in MasterFields)
         {
@@ -493,60 +455,60 @@ public sealed class MixerDataPacket : DataPacket
                 92 => TCNetText.Describe(SendReturn3Source),
                 93 => TCNetText.Describe(SendReturn3Type),
                 102 => TCNetText.Describe(BeatFxChannel),
+                67 or 68 or 71 or 72 or 74 or 85 or 86 or 94 or 100 => _b[o] != 0 ? "On" : "Off",
                 _ => null,
             };
-            f.Add(new(o, 1, n, _raw[o].ToString(), meaning));
+            f.Add(new(o, 1, n, _b[o].ToString(), meaning));
         }
         foreach (var ch in Channels)
         {
-            for (int i = 0; i < ChannelFieldNames.Length; i++)
+            for (int i = 0; i < MixerChannel.FieldNames.Length; i++)
             {
                 string? meaning = i switch
                 {
-                    0 => TCNetText.Describe(ch.SourceSelect),
+                    0 => TCNetText.Describe(ch.Source),
+                    11 => ch.CueA ? "On" : "Off",
+                    12 => ch.CueB ? "On" : "Off",
                     13 => TCNetText.Describe(ch.CrossfaderAssign),
                     _ => null,
                 };
-                f.Add(new(ch.Offset + i, 1, $"Channel {ch.Number} {ChannelFieldNames[i]}", _raw[ch.Offset + i].ToString(), meaning));
+                f.Add(new(ch.Offset + i, 1, $"Channel {ch.Number} {MixerChannel.FieldNames[i]}", _b[ch.Offset + i].ToString(), meaning));
             }
         }
     }
 
     public override string Summary =>
-        $"{MixerName} master {MasterFaderLevel} xf {CrossFader} faders " + string.Join(" ", Channels.Select(c => c.FaderLevel));
+        $"{MixerName} master {MasterFaderLevel} xf {CrossFader} ch " + string.Join("/", Channels.Select(c => c.FaderLevel));
 }
 
-/// <summary>A type 200 / 204 packet with a data type this library does not model. The payload (bytes 26…) is kept raw.</summary>
+/// <summary>A type 200/204 packet with a data type this library doesn't model; bytes 26+ kept raw.</summary>
 public sealed class UnknownDataPacket : DataPacket
 {
-    private MessageType _messageType = MessageType.Data;
-    private DataType _dataType;
+    private MessageType _message;
+    private DataType _data;
 
-    public UnknownDataPacket() { }
+    public UnknownDataPacket() : this(MessageType.Data, 0) { }
 
-    public UnknownDataPacket(MessageType messageType, DataType dataType)
+    public UnknownDataPacket(MessageType message, DataType data)
     {
-        _messageType = messageType;
-        _dataType = dataType;
+        _message = message;
+        _data = data;
     }
 
-    public override MessageType MessageType => _messageType;
-    public override DataType DataType => _dataType;
-    public override string Name => $"Data – unknown type {(byte)_dataType}";
+    public override MessageType MessageType => _message;
+    public override DataType DataType => _data;
+    public override string Name => $"Data · unknown type {(byte)_data}";
     public override int Length => 26 + Payload.Length;
-
-    /// <summary>Bytes 26 to the end of the datagram.</summary>
     public byte[] Payload { get; set; } = [];
 
-    protected override void WriteData(Span<byte> p) => Payload.CopyTo(p[26..]);
+    protected override void EncodeData(Span<byte> p) => Payload.CopyTo(p[26..]);
 
-    protected override void ReadData(ReadOnlySpan<byte> p, int receivedLength)
+    protected override void DecodeData(ReadOnlySpan<byte> p, int datagramLength)
     {
-        _messageType = (MessageType)p[7];
-        _dataType = (DataType)p[24];
-        Payload = p.Slice(26, Math.Max(0, receivedLength - 26)).ToArray();
+        _message = (MessageType)p[7];
+        _data = (DataType)p[24];
+        Payload = p.Slice(26, Math.Max(0, datagramLength - 26)).ToArray();
     }
 
-    protected override void DescribeData(List<TCNetField> f) =>
-        f.Add(new(26, Payload.Length, "Payload", Convert.ToHexString(Payload.AsSpan(0, Math.Min(32, Payload.Length))) + (Payload.Length > 32 ? "…" : "")));
+    protected override void DescribeData(List<TCNetField> f) => f.Add(new(26, Payload.Length, "Payload", Wire.Hex(Payload)));
 }

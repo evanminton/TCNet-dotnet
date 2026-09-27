@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:TCNet.Maui.ViewModels"
+             xmlns:tc="clr-namespace:TCNet;assembly=TCNet"
+             x:Class="TCNet.Maui.Views.NodePage"
+             x:DataType="vm:NodeViewModel"
+             Title="{Binding Title}">
+    <ScrollView>
+        <VerticalStackLayout Padding="12" Spacing="12">
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="3">
+                    <Label Text="Node" Style="{StaticResource Heading}" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Info}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:Row">
+                                <Grid ColumnDefinitions="160,*,*" ColumnSpacing="8">
+                                    <Label Text="{Binding Name}" Style="{StaticResource Caption}" />
+                                    <Label Grid.Column="1" Text="{Binding Value}" Style="{StaticResource Mono}" />
+                                    <Label Grid.Column="2" Text="{Binding Meaning}" Style="{StaticResource Caption}" />
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="3">
+                    <Label Text="Layers" Style="{StaticResource Heading}" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Layers}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:Row">
+                                <VerticalStackLayout Padding="0,2">
+                                    <Label>
+                                        <Label.FormattedText>
+                                            <FormattedString>
+                                                <Span Text="{Binding Name}" FontAttributes="Bold" />
+                                                <Span Text="   " />
+                                                <Span Text="{Binding Value}" />
+                                            </FormattedString>
+                                        </Label.FormattedText>
+                                    </Label>
+                                    <Label Text="{Binding Meaning}" Style="{StaticResource Caption}" />
+                                </VerticalStackLayout>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="Request · Time sync" Style="{StaticResource Heading}" />
+                    <Grid ColumnDefinitions="*,90" ColumnSpacing="8">
+                        <Picker x:Name="DataPicker" Title="Data type" ItemsSource="{Binding DataTypes}" SelectedItem="{Binding DataType}" />
+                        <Picker Grid.Column="1" Title="Layer" ItemsSource="{Binding LayerNumbers}" SelectedItem="{Binding Layer}" />
+                    </Grid>
+                    <FlexLayout Wrap="Wrap">
+                        <Button Text="Request" Command="{Binding RequestCommand}" Margin="0,0,8,8" />
+                        <Button Text="Request every data type" Command="{Binding RequestAllCommand}" Margin="0,0,8,8" />
+                        <Button Text="Time sync (4 rounds)" Command="{Binding SyncCommand}" Margin="0,0,8,8" />
+                    </FlexLayout>
+
+                    <Label Text="Control path (type 101) – layer uses the picker above" Style="{StaticResource Caption}" />
+                    <Entry Text="{Binding ControlPath}" Placeholder="layer/1/state=6;" />
+                    <FlexLayout Wrap="Wrap">
+                        <Button Text="Send control" Command="{Binding ControlCommand}" Margin="0,0,8,8" />
+                        <Button Text="Play + resync" Command="{Binding PlayCommand}" Margin="0,0,8,8" />
+                        <Button Text="Pause" Command="{Binding PauseCommand}" Margin="0,0,8,8" />
+                        <Button Text="Stop" Command="{Binding StopCommand}" Margin="0,0,8,8" />
+                    </FlexLayout>
+
+                    <Label Text="Text Data (type 128)" Style="{StaticResource Caption}" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Entry Text="{Binding Text}" />
+                        <Button Grid.Column="1" Text="Send text" Command="{Binding TextCommand}" />
+                    </Grid>
+                    <Label Text="Keyboard Data (type 132) – a character or 0xNNNN" Style="{StaticResource Caption}" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Entry Text="{Binding Key}" />
+                        <Button Grid.Column="1" Text="Send key" Command="{Binding KeyCommand}" />
+                    </Grid>
+
+                    <ActivityIndicator IsRunning="{Binding Busy}" IsVisible="{Binding Busy}" />
+                    <Label Text="{Binding Result}" Style="{StaticResource Mono}" />
+                    <Image Source="{Binding Artwork}" HeightRequest="160" Aspect="AspectFit" HorizontalOptions="Start" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="tc:TCNetField">
+                                <Grid ColumnDefinitions="60,200,*,*" ColumnSpacing="8">
+                                    <Label Text="{Binding Offset}" Style="{StaticResource Caption}" />
+                                    <Label Grid.Column="1" Text="{Binding Name}" />
+                                    <Label Grid.Column="2" Text="{Binding Value}" Style="{StaticResource Mono}" />
+                                    <Label Grid.Column="3" Text="{Binding Meaning}" Style="{StaticResource Caption}" />
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>
