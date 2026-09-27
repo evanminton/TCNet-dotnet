@@ -15,11 +15,11 @@
                             <Label Text="{Binding Name}" Style="{StaticResource Heading}" />
                             <Label Grid.Column="1" Text="{Binding Line}" VerticalOptions="Center" />
                             <HorizontalStackLayout Grid.Row="1" Grid.Column="1" Spacing="6">
-                                <Button Text="Load" Command="{Binding LoadCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
-                                <Button Text="Play" Command="{Binding PlayCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
-                                <Button Text="Pause" Command="{Binding PauseCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
-                                <Button Text="Stop" Command="{Binding StopCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
-                                <Button Text="On air" Command="{Binding AirCommand, Source={RelativeSource AncestorType={x:Type vm:MasterViewModel}}}" CommandParameter="{Binding .}" />
+                                <Button Text="Load" Command="{Binding LoadCommand}" />
+                                <Button Text="Play" Command="{Binding PlayCommand}" />
+                                <Button Text="Pause" Command="{Binding PauseCommand}" />
+                                <Button Text="Stop" Command="{Binding StopCommand}" />
+                                <Button Text="On air" Command="{Binding AirCommand}" />
                             </HorizontalStackLayout>
                         </Grid>
                     </Border>

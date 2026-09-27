@@ -181,13 +181,33 @@ public sealed class SendViewModel : Bindable
     }
 }
 
-/// <summary>One simulated deck on the Master page.</summary>
-public sealed class DeckRow(Deck deck) : Bindable
+/// <summary>One simulated deck on the Master page, with its own buttons.</summary>
+public sealed class DeckRow : Bindable
 {
     private string _line = "";
-    public Deck Deck { get; } = deck;
+
+    public DeckRow(Deck deck)
+    {
+        Deck = deck;
+        PlayCommand = new Command(() => Deck.State = LayerState.Playing);
+        PauseCommand = new Command(() => Deck.State = LayerState.Paused);
+        StopCommand = new Command(() => { Deck.State = LayerState.Stopped; Deck.PositionMs = 0; });
+        LoadCommand = new Command(() =>
+        {
+            uint id = (uint)Random.Shared.Next(2000, 9999);
+            Deck.Load(id, "Demo Artist", $"Track {id}", (uint)Random.Shared.Next(150_000, 420_000), Random.Shared.Next(110, 140));
+        });
+        AirCommand = new Command(() => Deck.OnAir = Deck.OnAir == 0 ? (byte)255 : (byte)0);
+    }
+
+    public Deck Deck { get; }
     public string Name => $"Layer {TCNetText.LayerLabel(Deck.Index)}";
     public string Line { get => _line; private set => Set(ref _line, value); }
+    public ICommand PlayCommand { get; }
+    public ICommand PauseCommand { get; }
+    public ICommand StopCommand { get; }
+    public ICommand LoadCommand { get; }
+    public ICommand AirCommand { get; }
 
     public void Refresh(TimePacket t)
     {
@@ -208,26 +228,10 @@ public sealed class MasterViewModel : PollingViewModel
     {
         _app = app;
         Decks = new ObservableCollection<DeckRow>(app.Playback.Decks.Select(d => new DeckRow(d)));
-        PlayCommand = new Command<DeckRow>(d => SetState(d, LayerState.Playing));
-        PauseCommand = new Command<DeckRow>(d => SetState(d, LayerState.Paused));
-        StopCommand = new Command<DeckRow>(d => { SetState(d, LayerState.Stopped); d.Deck.PositionMs = 0; });
-        LoadCommand = new Command<DeckRow>(d =>
-        {
-            uint id = (uint)Random.Shared.Next(2000, 9999);
-            d.Deck.Load(id, "Demo Artist", $"Track {id}", (uint)Random.Shared.Next(150_000, 420_000), Random.Shared.Next(110, 140));
-        });
-        AirCommand = new Command<DeckRow>(d => d.Deck.OnAir = d.Deck.OnAir == 0 ? (byte)255 : (byte)0);
     }
 
     public ObservableCollection<DeckRow> Decks { get; }
     public string Header { get => _header; private set => Set(ref _header, value); }
-    public ICommand PlayCommand { get; }
-    public ICommand PauseCommand { get; }
-    public ICommand StopCommand { get; }
-    public ICommand LoadCommand { get; }
-    public ICommand AirCommand { get; }
-
-    private static void SetState(DeckRow d, LayerState s) => d.Deck.State = s;
 
     protected override void Poll()
     {
