@@ -14,12 +14,22 @@ public sealed class PacketPage : ContentPage
         string text = p.ToDisplayString();
         string dump = Wire.HexDump(bytes);
 
+        var copied = new Label { Style = Res<Style>("Caption"), VerticalOptions = LayoutOptions.Center };
+        async Task Copy(string what, string value)
+        {
+            try
+            {
+                await Clipboard.Default.SetTextAsync(value);
+                copied.Text = $"{what} copied.";
+            }
+            catch (Exception ex) { copied.Text = $"Could not copy: {ex.Message}"; }
+        }
         var copyFields = new Button { Text = "Copy fields" };
-        copyFields.Clicked += async (_, _) => await Clipboard.Default.SetTextAsync(text);
+        copyFields.Clicked += async (_, _) => await Copy("Fields", text);
         var copyHex = new Button { Text = "Copy hex" };
-        copyHex.Clicked += async (_, _) => await Clipboard.Default.SetTextAsync(Convert.ToHexString(bytes));
+        copyHex.Clicked += async (_, _) => await Copy("Hex", Convert.ToHexString(bytes));
         var copyDump = new Button { Text = "Copy dump" };
-        copyDump.Clicked += async (_, _) => await Clipboard.Default.SetTextAsync(dump);
+        copyDump.Clicked += async (_, _) => await Copy("Dump", dump);
 
         var stack = new VerticalStackLayout { Padding = 12, Spacing = 8 };
         stack.Add(new Label { Text = $"{row.Direction} {row.Time} · {row.Route}", Style = Res<Style>("Heading") });
@@ -29,7 +39,7 @@ public sealed class PacketPage : ContentPage
                    + (p.WasPadded ? $" (received {p.ReceivedLength}, zero padded)" : ""),
             Style = Res<Style>("Caption"),
         });
-        stack.Add(new HorizontalStackLayout { Spacing = 8, Children = { copyFields, copyHex, copyDump } });
+        stack.Add(new HorizontalStackLayout { Spacing = 8, Children = { copyFields, copyHex, copyDump, copied } });
 
         var header = new Grid { ColumnDefinitions = Columns(), ColumnSpacing = 8 };
         AddCells(header, "Offset", "Size", "Field", "Value", "Meaning", bold: true);

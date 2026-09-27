@@ -65,7 +65,26 @@ public class AssemblyTests
         Assert.Equal(0, asm.Pending);
         for (byte l = 1; l <= 5; l++) asm.Add(new BigWaveformPacket { LayerId = l, TotalPackets = 2, Payload = [1] });
         Assert.Equal(2, asm.Pending);
+
+        // A chunk larger than the transfer limit is rejected without opening (or evicting) a transfer.
         Assert.Null(asm.Add(new BigWaveformPacket { LayerId = 8, TotalPackets = 2, Payload = new byte[11] }));
+        Assert.Equal(2, asm.Pending);
+        Assert.Null(asm.Add(new BigWaveformPacket { LayerId = 8, TotalPackets = 2, PacketNumber = 1, Payload = [2] }));
+        Assert.Null(asm.Add(new BigWaveformPacket { LayerId = 8, TotalPackets = 2, PacketNumber = 0, Payload = new byte[11] }));
+
+        // Chunks that together exceed the limit drop the transfer; the last chunk then can't complete it.
+        var big = new ChunkAssembler { MaxTransferBytes = 10 };
+        BigWaveformPacket Part(uint n) => new() { TotalPackets = 3, PacketNumber = n, Payload = new byte[6] };
+        Assert.Null(big.Add(Part(0)));
+        Assert.Equal(1, big.Pending);
+        Assert.Null(big.Add(Part(1)));
+        Assert.Equal(0, big.Pending);
+        Assert.Equal(0, big.BufferedBytes);
+        Assert.Null(big.Add(Part(2)));
+
+        // Within the limits a transfer still completes.
+        Assert.Null(asm.Add(new BigWaveformPacket { LayerId = 9, TotalPackets = 2, PacketNumber = 0, Payload = [1] }));
+        Assert.Equal(new byte[] { 1, 2 }, asm.Add(new BigWaveformPacket { LayerId = 9, TotalPackets = 2, PacketNumber = 1, Payload = [2] })!.Data);
     }
 
     [Fact]
@@ -269,9 +288,11 @@ public class NodeTests
     [Fact]
     public async Task ConcurrentIdenticalRequests_BothSucceed_And_ControlsQueue()
     {
-        var (master, slave, node, _) = await Pair();
+        var (master, slave, node, pb) = await Pair();
         await using var _m = master;
         await using var _s = slave;
+        int controls = 0;
+        master.PacketReceived += (_, e) => { if (e.Packet is ControlPacket) Interlocked.Increment(ref controls); };
         var a = slave.RequestAsync(node, DataType.Metadata, 1);
         var b = slave.RequestAsync(node, DataType.Metadata, 1);
         Assert.True((await a).Success);
@@ -281,6 +302,9 @@ public class NodeTests
         var c2 = slave.SendControlAsync(node, "layer/1/state=3;", TimeSpan.FromSeconds(2));
         Assert.Equal(NotificationCode.Ok, (await c1)?.Code);
         Assert.Equal(NotificationCode.Ok, (await c2)?.Code);
+        // Both controls share one key: without the queue the second would join the first and never be sent.
+        Assert.Equal(2, controls);
+        Assert.Equal(LayerState.Playing, pb[1].State);
     }
 
     [Fact]
@@ -320,12 +344,20 @@ public class NodeTests
     {
         var node = new TCNetNode(Loop(230, "SAFE", NodeType.Master));
         node.Settings.OptInInterval = TimeSpan.FromMilliseconds(50);
-        int sent = 0;
+        int sent = 0, calls = 0, warnings = 0;
         node.PacketSent += (_, e) => { if (e.Packet is OptInPacket) Interlocked.Increment(ref sent); };
-        node.StatusProvider = () => throw new InvalidOperationException("boom");
+        node.Warning += (_, w) => { if (w.Contains("boom")) Interlocked.Increment(ref warnings); };
+        node.StatusProvider = () =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new InvalidOperationException("boom");
+        };
         await node.StartAsync();
-        await Task.Delay(300);
-        Assert.True(sent >= 3);
+        // Opt-IN keeps going although the provider throws every time (polled: timing varies under load).
+        for (int i = 0; i < 100 && (Volatile.Read(ref sent) < 3 || Volatile.Read(ref warnings) < 1); i++) await Task.Delay(50);
+        Assert.True(Volatile.Read(ref sent) >= 3);
+        Assert.True(Volatile.Read(ref calls) >= 1);
+        Assert.True(Volatile.Read(ref warnings) >= 1);
         await Task.WhenAll(node.StopAsync(), node.StopAsync(), node.StopAsync());
         Assert.False(node.IsRunning);
     }

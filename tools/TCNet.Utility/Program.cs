@@ -10,7 +10,8 @@ try
 {
     return await new Tool(args).RunAsync();
 }
-catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException or TimeoutException or System.Net.Sockets.SocketException)
+catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException or TimeoutException or OverflowException
+                               or IOException or UnauthorizedAccessException or System.Net.Sockets.SocketException)
 {
     Console.Error.WriteLine($"tcnet: {ex.Message}");
     return 2;
@@ -20,6 +21,7 @@ catch (Exception ex) when (ex is FormatException or ArgumentException or Invalid
 internal sealed class Tool
 {
     private static readonly HashSet<string> Flags = ["full", "hex", "markdown", "own", "help", "all"];
+    private static readonly HashSet<string> Known = new(["iface", "bcast", "name", "id", "port", "role", "type", "from", "seconds", "interval", "out", .. Flags], StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _args = [];
     private readonly Dictionary<string, string?> _opt = new(StringComparer.OrdinalIgnoreCase);
 
@@ -41,7 +43,23 @@ internal sealed class Tool
     private string Arg(int i, string what) => i < _args.Count ? _args[i] : throw new ArgumentException($"missing {what}");
     private string Rest(int from) => string.Join(" ", _args.Skip(from));
 
-    public Task<int> RunAsync() => (_args.FirstOrDefault()?.ToLowerInvariant(), Has("help")) switch
+    private static long Number(string text, string what, long min, long max) =>
+        long.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n >= min && n <= max
+            ? n
+            : throw new ArgumentException($"{what} must be a number from {min} to {max}, not '{text}'");
+
+    private int OptNumber(string n, int def, int min, int max) => Opt(n) is { } v ? (int)Number(v, "--" + n, min, max) : def;
+
+    public Task<int> RunAsync()
+    {
+        if (_opt.Keys.FirstOrDefault(k => !Known.Contains(k)) is { } bad)
+            throw new ArgumentException($"unknown option '--{bad}' – try: tcnet help");
+        if (_opt.FirstOrDefault(o => o.Value is null && !Flags.Contains(o.Key)).Key is { } empty)
+            throw new ArgumentException($"option '--{empty}' needs a value");
+        return Dispatch();
+    }
+
+    private Task<int> Dispatch() => (_args.FirstOrDefault()?.ToLowerInvariant(), Has("help")) switch
     {
         (_, true) or (null, _) or ("help", _) => Task.FromResult(Help()),
         ("listen", _) => Listen(),
@@ -107,17 +125,22 @@ internal sealed class Tool
 
     // ───────── node ─────────
 
+    private static NodeType ParseRole(string r) =>
+        Enum.TryParse<NodeType>(r, true, out var t) && Enum.IsDefined(t) && !r.Trim().StartsWith('-')
+            ? t
+            : throw new ArgumentException($"--role must be one of {string.Join(", ", Enum.GetNames<NodeType>()).ToLowerInvariant()}, not '{r}'");
+
     private async Task<TCNetNode> Node(NodeType role = NodeType.Slave)
     {
         var s = new NodeSettings
         {
             NodeName = Opt("name") ?? "TCNETCLI",
-            NodeType = Opt("role") is { } r ? Enum.Parse<NodeType>(r, true) : role,
+            NodeType = Opt("role") is { } r ? ParseRole(r) : role,
             DeviceName = "tcnet utility",
             ReceiveOwnPackets = Has("own"),
         };
-        if (Opt("id") is { } id) s.NodeId = ushort.Parse(id, CultureInfo.InvariantCulture);
-        if (Opt("port") is { } port) s.ListenerPort = int.Parse(port, CultureInfo.InvariantCulture);
+        if (Opt("id") is not null) s.NodeId = (ushort)OptNumber("id", 0, 0, ushort.MaxValue);
+        if (Opt("port") is not null) s.ListenerPort = OptNumber("port", 0, 0, ushort.MaxValue);
         if (Opt("iface") is { } ip) s.LocalAddress = IPAddress.Parse(ip);
         if (Opt("bcast") is { } b) s.BroadcastAddress = IPAddress.Parse(b);
         var node = new TCNetNode(s);
@@ -153,7 +176,7 @@ internal sealed class Tool
 
     private async Task<int> Listen()
     {
-        var types = Opt("type")?.Split(',').Select(t => byte.Parse(t.Trim(), CultureInfo.InvariantCulture)).ToHashSet();
+        var types = Opt("type")?.Split(',').Select(t => (byte)Number(t, "--type", 0, byte.MaxValue)).ToHashSet();
         var from = Opt("from");
         bool full = Has("full"), hex = Has("hex");
         await using var node = await Node();
@@ -183,7 +206,7 @@ internal sealed class Tool
 
     private async Task<int> NodesCmd()
     {
-        int seconds = int.Parse(Opt("seconds") ?? "5", CultureInfo.InvariantCulture);
+        int seconds = OptNumber("seconds", 5, 0, 86_400);
         await using var node = await Node();
         Console.Error.WriteLine($"# listening {seconds} s …");
         await Task.Delay(TimeSpan.FromSeconds(seconds));
@@ -229,15 +252,16 @@ internal sealed class Tool
         "bigwave" or "big" or "bigwaveform" => DataType.BigWaveform,
         "artwork" or "art" => DataType.LowResArtwork,
         "mixer" => DataType.Mixer,
-        _ => (DataType)byte.Parse(s, CultureInfo.InvariantCulture),
+        _ => (DataType)Number(s, "data type", 0, byte.MaxValue),
     };
 
     private async Task<int> Request()
     {
-        await using var node = await Node();
-        var target = await Find(node, Arg(1, "node"));
+        var query = Arg(1, "node");
         var type = ParseData(Arg(2, "data type"));
-        byte layer = _args.Count > 3 ? byte.Parse(_args[3], CultureInfo.InvariantCulture) : type == DataType.Mixer ? (byte)0 : (byte)1;
+        byte layer = _args.Count > 3 ? (byte)Number(_args[3], "layer", 0, byte.MaxValue) : type == DataType.Mixer ? (byte)0 : (byte)1;
+        await using var node = await Node();
+        var target = await Find(node, query);
         var r = await node.RequestAsync(target, type, layer, TimeSpan.FromSeconds(5));
         Console.WriteLine(r);
         if (r.Notification is { } en) Fields(en);
@@ -279,9 +303,10 @@ internal sealed class Tool
 
     private async Task<int> Sync()
     {
+        var query = Arg(1, "node");
+        int rounds = _args.Count > 2 ? (int)Number(_args[2], "rounds", 1, 100) : 4;
         await using var node = await Node();
-        var target = await Find(node, Arg(1, "node"));
-        int rounds = _args.Count > 2 ? int.Parse(_args[2], CultureInfo.InvariantCulture) : 4;
+        var target = await Find(node, query);
         var s = await node.TimeSyncAsync(target, rounds);
         Console.WriteLine($"{target.NodeName}: delay {TCNetUnits.Micros(s.DelayMicros)}, round trip {TCNetUnits.Micros(s.RoundTripMicros)}, clock offset {TCNetUnits.Micros(s.OffsetMicros)} over {rounds} rounds");
         return 0;
@@ -289,26 +314,47 @@ internal sealed class Tool
 
     private async Task<int> Control()
     {
-        await using var node = await Node();
-        var target = await Find(node, Arg(1, "node"));
+        var query = Arg(1, "node");
         var path = Rest(2);
-        foreach (var c in ControlCommand.Parse(path))
+        var commands = ControlCommand.Parse(path);
+        if (commands.Count == 0) throw new ArgumentException("missing control path, e.g. \"layer/1/state=6;\"");
+        await using var node = await Node();
+        var target = await Find(node, query);
+        foreach (var c in commands)
             Console.WriteLine($"  {c.Path} = {c.Value ?? "(no value)"}{(c.Leaf == "state" && byte.TryParse(c.Value, out var st) ? $"  ({TCNetText.Describe((LayerState)st)})" : "")}");
         var ack = await node.SendControlAsync(target, path);
         Console.WriteLine(ack is null ? "no answer" : $"answer: {TCNetText.Describe(ack.Code)}");
         return ack?.Code == NotificationCode.Ok ? 0 : 1;
     }
 
-    private async Task<(TCNetNode Node, RemoteNode? Target, string Value)> Targeted()
+    /// <summary>[&lt;node&gt;] &lt;value&gt;: the value is validated before the node starts; the node is disposed if the target isn't found.</summary>
+    private async Task<(TCNetNode Node, RemoteNode? Target, string Value)> Targeted(string what, Action<string> validate)
     {
+        string? query = _args.Count > 2 ? _args[1] : null;
+        var value = query is null ? Arg(1, what) : Rest(2);
+        validate(value);
         var node = await Node();
-        if (_args.Count > 2) return (node, await Find(node, _args[1]), Rest(2));
-        return (node, null, Arg(1, "value"));
+        try
+        {
+            return (node, query is null ? null : await Find(node, query), value);
+        }
+        catch
+        {
+            await node.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static ushort KeyCode(string key)
+    {
+        if (key.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return ushort.TryParse(key[2..], NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var c) ? c : throw new ArgumentException($"key code must be 0x0000 to 0xFFFF, not '{key}'");
+        return key.Length == 1 ? key[0] : throw new ArgumentException($"key must be one character or 0xNNNN, not '{key}'");
     }
 
     private async Task<int> SendText()
     {
-        var (node, target, text) = await Targeted();
+        var (node, target, text) = await Targeted("text", t => { if (t.Length == 0) throw new ArgumentException("missing text"); });
         await using var _ = node;
         await node.SendTextAsync(text, target);
         Console.WriteLine($"sent Text Data ({text.Length} characters) to {target?.ToString() ?? "broadcast 60000"}");
@@ -317,9 +363,9 @@ internal sealed class Tool
 
     private async Task<int> SendKey()
     {
-        var (node, target, key) = await Targeted();
+        var (node, target, key) = await Targeted("key", k => KeyCode(k));
         await using var _ = node;
-        ushort code = key.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? ushort.Parse(key[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture) : key[0];
+        ushort code = KeyCode(key);
         await node.SendKeyAsync(code, target);
         Console.WriteLine($"sent Keyboard Data 0x{code:X4} to {target?.ToString() ?? "broadcast 60000"}");
         return 0;
@@ -357,6 +403,7 @@ internal sealed class Tool
 
     private int Build()
     {
+        Arg(1, "packet type (a name or number, see 'tcnet layout')");
         var p = Sample(FindType(Rest(1)));
         Console.WriteLine(p.ToDisplayString());
         Console.Write(TCNet.Wire.HexDump(p.ToArray(), 1024));
@@ -366,13 +413,15 @@ internal sealed class Tool
 
     private async Task<int> Send()
     {
-        var info = FindType(Arg(1, "packet type"));
-        await using var node = await Node();
-        var p = Sample(info);
+        var p = Sample(FindType(Arg(1, "packet type")));
         string to = _args.Count > 2 ? _args[2] : "bcast:" + (p is TimePacket ? TCNetConstants.TimePort : TCNetConstants.BroadcastPort);
-        IPEndPoint ep = to.StartsWith("bcast:", StringComparison.OrdinalIgnoreCase)
-            ? new IPEndPoint(node.BroadcastAddress, int.Parse(to[6..], CultureInfo.InvariantCulture))
-            : IPEndPoint.TryParse(to, out var direct) ? direct : (await Find(node, to)).EndPoint!;
+        int? bcastPort = null;
+        IPEndPoint? direct = null;
+        if (to.StartsWith("bcast:", StringComparison.OrdinalIgnoreCase)) bcastPort = (int)Number(to[6..], "broadcast port", 1, ushort.MaxValue);
+        else if (to.Contains(':'))
+            direct = IPEndPoint.TryParse(to, out var d) && d.Port > 0 ? d : throw new ArgumentException($"invalid endpoint '{to}' – expected <ip>:<port> with port 1 to 65535");
+        await using var node = await Node();
+        IPEndPoint ep = bcastPort is { } bp ? new IPEndPoint(node.BroadcastAddress, bp) : direct ?? (await Find(node, to)).EndPoint!;
         await node.SendAsync(p, ep);
         Console.WriteLine($"sent {p.Name} ({p.Length} bytes) to {ep}");
         Fields(p);
@@ -381,8 +430,8 @@ internal sealed class Tool
 
     private async Task<int> Master()
     {
-        int seconds = int.Parse(Opt("seconds") ?? "0", CultureInfo.InvariantCulture);
-        int interval = Math.Clamp(int.Parse(Opt("interval") ?? "20", CultureInfo.InvariantCulture), 1, 40);
+        int seconds = OptNumber("seconds", 0, 0, int.MaxValue);
+        int interval = OptNumber("interval", 20, 1, 40);
         var pb = Playback.Demo();
         await using var node = await Node(NodeType.Master);
         node.RequestHandler = (rq, from) =>
@@ -416,6 +465,7 @@ internal sealed class Tool
 
     private int Decode()
     {
+        Arg(1, "hex bytes or @file");
         var src = Rest(1);
         var data = src.StartsWith('@') ? File.ReadAllBytes(src[1..]) : TCNet.Wire.ParseHex(src);
         if (!TCNetPacket.TryParse(data, out var p, out var err))
@@ -433,28 +483,38 @@ internal sealed class Tool
     private int Layout()
     {
         var q = Rest(1);
+        int hits = 0;
         foreach (var p in TCNetCatalog.Packets)
         {
             if (q.Length > 0 && p.Key != q && !p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
+            hits++;
             Console.WriteLine($"{p.Name}  (type {p.Key}; {p.Transport}; port {p.Port}; size {p.Size}; {p.Behavior})");
             Console.WriteLine($"  {p.Purpose}");
             foreach (var f in p.Layout) Console.WriteLine($"  {f.Offset,5} {f.Size,4}  {f.Name}");
             Console.WriteLine();
         }
-        return 0;
+        return hits > 0 ? 0 : NoMatch("packet", q, "layout");
     }
 
     private int Options()
     {
         var q = Rest(1);
+        int hits = 0;
         foreach (var s in TCNetText.OptionSets)
         {
             if (q.Length > 0 && !s.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
+            hits++;
             Console.WriteLine($"{s.Name}  ({s.Where}{(s.IsFlags ? "; flags, summed" : "")})");
             foreach (var o in s.Options) Console.WriteLine($"  {o.Value,5}  {o.Name,-22} {o.Description}");
             Console.WriteLine();
         }
-        return 0;
+        return hits > 0 ? 0 : NoMatch("option table", q, "options");
+    }
+
+    private static int NoMatch(string what, string q, string command)
+    {
+        Console.Error.WriteLine($"no {what} matches '{q}' – try: tcnet {command}");
+        return 1;
     }
 
     private static int Codes()

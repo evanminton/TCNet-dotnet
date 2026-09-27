@@ -40,6 +40,9 @@ public sealed class RemoteNode
     /// <summary>True once this node was seen with node type Auto (used by master election).</summary>
     public bool EverAuto { get; internal set; }
 
+    /// <summary>When this node was first seen as Master in its current run as Master (null when not Master).</summary>
+    public DateTime? MasterSince { get; internal set; }
+
     public DateTime FirstSeen { get; }
     public DateTime LastSeen { get; internal set; }
     public long Packets { get; internal set; }

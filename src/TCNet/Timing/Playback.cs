@@ -3,20 +3,35 @@ using TCNet.Text;
 
 namespace TCNet;
 
-/// <summary>A simulated deck.</summary>
+/// <summary>A simulated deck. Changes take the playback lock, so they are safe while a node streams from another thread.</summary>
 public sealed class Deck
 {
-    internal Deck(int index)
+    private readonly object _gate;
+    private LayerState _state = LayerState.Idle;
+    private double _position;
+
+    internal Deck(int index, object gate)
     {
         Index = index;
+        _gate = gate;
         Name = $"Deck {TCNetText.LayerLabel(index)}";
     }
 
     public int Index { get; }
     public byte Number => (byte)(Index + 1);
     public string Name { get; set; }
-    public LayerState State { get; set; } = LayerState.Idle;
-    public double PositionMs { get; set; }
+    public LayerState State
+    {
+        get { lock (_gate) return _state; }
+        set { lock (_gate) _state = value; }
+    }
+
+    public double PositionMs
+    {
+        get { lock (_gate) return _position; }
+        set { lock (_gate) _position = value; }
+    }
+
     public uint LengthMs { get; set; }
     public double Bpm { get; set; } = 128;
     /// <summary>1.0 = 100 %.</summary>
@@ -37,13 +52,16 @@ public sealed class Deck
 
     public void Load(uint trackId, string artist, string title, uint lengthMs, double bpm)
     {
-        TrackId = trackId;
-        Artist = artist;
-        Title = title;
-        LengthMs = lengthMs;
-        Bpm = bpm;
-        PositionMs = 0;
-        State = LayerState.Paused;
+        lock (_gate)
+        {
+            TrackId = trackId;
+            Artist = artist;
+            Title = title;
+            LengthMs = lengthMs;
+            Bpm = bpm;
+            _position = 0;
+            _state = LayerState.Paused;
+        }
     }
 }
 
@@ -59,7 +77,7 @@ public sealed class Playback
 
     public Playback()
     {
-        for (int i = 0; i < 8; i++) Decks[i] = new Deck(i);
+        for (int i = 0; i < 8; i++) Decks[i] = new Deck(i, _gate);
     }
 
     public Deck[] Decks { get; } = new Deck[8];
@@ -145,17 +163,28 @@ public sealed class Playback
     public StatusPacket BuildStatus()
     {
         var p = new StatusPacket { SmpteMode = SmpteMode };
-        foreach (var d in Decks)
+        lock (_gate)
         {
-            var l = p.Layers[d.Index];
-            (l.Source, l.State, l.TrackId, l.Name) = (d.Source, d.State, d.TrackId, d.Name);
+            foreach (var d in Decks)
+            {
+                var l = p.Layers[d.Index];
+                (l.Source, l.State, l.TrackId, l.Name) = (d.Source, d.State, d.TrackId, d.Name);
+            }
         }
         return p;
     }
 
     public MetricsPacket BuildMetrics(byte layer)
     {
-        Advance();
+        lock (_gate)
+        {
+            Advance();
+            return Metrics(layer);
+        }
+    }
+
+    private MetricsPacket Metrics(byte layer)
+    {
         var d = this[layer];
         return new MetricsPacket
         {
@@ -176,10 +205,15 @@ public sealed class Playback
     public MetadataPacket BuildMetadata(byte layer)
     {
         var d = this[layer];
-        return new MetadataPacket { LayerId = layer, Artist = d.Artist, Title = d.Title, Key = d.Key, TrackId = d.TrackId };
+        lock (_gate) return new MetadataPacket { LayerId = layer, Artist = d.Artist, Title = d.Title, Key = d.Key, TrackId = d.TrackId };
     }
 
     public BeatGrid BuildBeatGrid(byte layer)
+    {
+        lock (_gate) return MakeBeatGrid(layer);
+    }
+
+    private BeatGrid MakeBeatGrid(byte layer)
     {
         var d = this[layer];
         var beats = new List<Beat>();
@@ -194,6 +228,11 @@ public sealed class Playback
 
     public Waveform BuildWaveform(byte layer, int bars)
     {
+        lock (_gate) return MakeWaveform(layer, bars);
+    }
+
+    private Waveform MakeWaveform(byte layer, int bars)
+    {
         var d = this[layer];
         var rnd = new Random((int)d.TrackId * 31 + layer);
         var list = new WaveformBar[bars];
@@ -206,6 +245,11 @@ public sealed class Playback
     }
 
     public CueDataPacket BuildCues(byte layer)
+    {
+        lock (_gate) return MakeCues(layer);
+    }
+
+    private CueDataPacket MakeCues(byte layer)
     {
         var d = this[layer];
         var p = new CueDataPacket { LayerId = layer };
@@ -222,6 +266,12 @@ public sealed class Playback
 
     /// <summary>Request handler: every data type for layers 1–8 (mixer is not simulated).</summary>
     public IReadOnlyList<TCNetPacket>? Answer(RequestPacket request)
+    {
+        // Runs on a receive thread while decks change: build from one consistent snapshot.
+        lock (_gate) return AnswerLocked(request);
+    }
+
+    private IReadOnlyList<TCNetPacket>? AnswerLocked(RequestPacket request)
     {
         byte layer = request.Layer;
         if (layer is < 1 or > 8) return null;

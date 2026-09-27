@@ -18,16 +18,22 @@ public readonly record struct Timecode(byte Hours, byte Minutes, byte Seconds, b
     public static Timecode FromMilliseconds(uint ms, SmpteMode mode)
     {
         int fps = FrameCount(mode);
-        long frames = (long)Math.Floor(ms / 1000.0 * FrameRate(mode));
+        var (num, den) = Rate(mode);
+        long frames = ms * num / (1000L * den);
         long secs = frames / fps;
         return new Timecode((byte)(secs / 3600 % 24), (byte)(secs / 60 % 60), (byte)(secs % 60), (byte)(frames % fps));
     }
 
+    /// <summary>First whole millisecond inside the frame, so <see cref="FromMilliseconds"/> gives the same timecode back.</summary>
     public uint ToMilliseconds(SmpteMode mode)
     {
         long frames = ((Hours * 60L + Minutes) * 60 + Seconds) * FrameCount(mode) + Frames;
-        return (uint)Math.Round(frames * 1000.0 / FrameRate(mode));
+        var (num, den) = Rate(mode);
+        return (uint)((frames * 1000L * den + num - 1) / num);
     }
+
+    /// <summary>Exact frame rate as a fraction; integer maths avoids off-by-one frames.</summary>
+    private static (long Num, long Den) Rate(SmpteMode mode) => mode == SmpteMode.Fps2997 ? (30000, 1001) : (FrameCount(mode), 1);
 
     public static Timecode Parse(string s)
     {

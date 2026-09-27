@@ -30,6 +30,9 @@ public abstract class TextPacket : TCNetPacket
     /// <summary>Data Size as received.</summary>
     public uint DeclaredSize { get; private set; }
 
+    /// <summary>The datagram ended before the declared Data Size; <see cref="Payload"/> holds only what arrived.</summary>
+    public bool Truncated { get; private set; }
+
     public override int Length => TCNetConstants.PayloadOffset + _payload.Length;
 
     private static string DecodeText(byte[] b)
@@ -53,13 +56,16 @@ public abstract class TextPacket : TCNetPacket
         DeclaredSize = Wire.U32(p, 26);
         int available = Math.Max(0, datagramLength - 42);
         int n = DeclaredSize == 0 ? available : (int)Math.Min(DeclaredSize, (uint)available);
+        Truncated = DeclaredSize > (uint)available;
         _payload = p.Slice(42, n).ToArray();
     }
 
     protected override void DescribeBody(List<TCNetField> f)
     {
         f.Add(new(24, 1, "STEP", ((byte)Step).ToString(), TCNetText.Describe(Step)));
-        f.Add(new(26, 4, "Data Size", _payload.Length.ToString()));
+        f.Add(Truncated
+            ? new(26, 4, "Data Size", DeclaredSize.ToString(), $"truncated: {_payload.Length} bytes received")
+            : new(26, 4, "Data Size", _payload.Length.ToString()));
         f.Add(new(42, _payload.Length, this is ControlPacket ? "Control Path" : "Text Data", Text));
     }
 

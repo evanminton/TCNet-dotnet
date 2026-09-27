@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
@@ -90,13 +91,24 @@ public static class Wire
         return sb.ToString();
     }
 
-    /// <summary>Accepts "54 43 4E", "54434e", "0x54,0x43" and similar.</summary>
+    private static readonly char[] HexSeparators = [' ', '\t', '\r', '\n', ',', '-', ':'];
+    private static readonly SearchValues<char> HexDigits = SearchValues.Create("0123456789abcdefABCDEF");
+
+    /// <summary>
+    /// Accepts "54 43 4E", "54434e", "0x54,0x43", "54-43:4E" and similar: tokens split on whitespace, ',', '-' or ':',
+    /// each an even number of hex digits with an optional leading 0x. Anything else throws <see cref="FormatException"/>.
+    /// </summary>
     public static byte[] ParseHex(string text)
     {
         var sb = new StringBuilder(text.Length);
-        foreach (char c in text.Replace("0x", " ", StringComparison.OrdinalIgnoreCase))
-            if (Uri.IsHexDigit(c)) sb.Append(c);
-        if (sb.Length % 2 != 0) throw new FormatException("Odd number of hex digits.");
+        foreach (var token in text.Split(HexSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var digits = token.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? token.AsSpan(2) : token.AsSpan();
+            if (digits.IsEmpty || digits.ContainsAnyExcept(HexDigits))
+                throw new FormatException($"\"{token}\" is not hex.");
+            if (digits.Length % 2 != 0) throw new FormatException($"\"{token}\" has an odd number of hex digits.");
+            sb.Append(digits);
+        }
         return Convert.FromHexString(sb.ToString());
     }
 

@@ -21,8 +21,18 @@ public sealed record AssembledData(
 
 /// <summary>
 /// Reassembles beat grid, waveform, artwork and application data. Packets may arrive in any order and be numbered
-/// from 0 or from 1; a transfer completes when every number of one of those ranges has arrived. Memory is bounded.
+/// from 0 or from 1. Memory is bounded per transfer and in total.
 /// </summary>
+/// <remarks>
+/// <para>A transfer (per source, node, type, layer and application code) starts over, dropping the parts it holds, when a
+/// packet clearly belongs to a newer transfer: a different Total Packets or Data Size, a number it already holds with
+/// different content, more than <see cref="MaxPacketGap"/> since its previous packet arrived, or a header Timestamp more
+/// than <see cref="SenderTimestampWindow"/> from its previous packet's (on the sender's 1 s timer). The packets of one
+/// transfer are sent back to back, so reordering within a transfer still completes.</para>
+/// <para>Numbering: a transfer holding part 0 completes only with 0 … total − 1 (a part numbered total is stray and
+/// ignored); otherwise 1 … total completes it. The base of a sender's first completed transfer is locked for its later
+/// transfers of the same type, so a stray part numbered total cannot stand in for a lost part 0.</para>
+/// </remarks>
 public sealed class ChunkAssembler
 {
     private sealed class Transfer
@@ -32,19 +42,42 @@ public sealed class ChunkAssembler
         public readonly SortedDictionary<uint, byte[]> Parts = new();
         public long Bytes;
         public DateTime Touched;
+        public uint Stamp;
     }
 
     private readonly record struct Key(string Source, ushort Node, MessageType Type, byte Data, byte Layer, ushort App);
 
+    private const int MaxLockedBases = 1024;
+
     private readonly Dictionary<Key, Transfer> _open = new();
+    private readonly Dictionary<Key, uint> _base = new();
     private readonly object _gate = new();
+    private long _buffered;
 
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(5);
     public int MaxTotalPackets { get; set; } = 4096;
-    public long MaxTransferBytes { get; set; } = 16 * 1024 * 1024;
+
+    /// <summary>Largest single transfer. Artwork and beat grids are well under 1 MB; big waveforms of long tracks a few MB at most.</summary>
+    public long MaxTransferBytes { get; set; } = 4 * 1024 * 1024;
+
+    /// <summary>All open transfers together; the least recently touched are evicted to stay under it.</summary>
+    public long MaxBufferedBytes { get; set; } = 32 * 1024 * 1024;
+
     public int MaxPendingTransfers { get; set; } = 64;
 
+    /// <summary>A packet arriving longer than this after the transfer's previous packet starts a new transfer.</summary>
+    public TimeSpan MaxPacketGap { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// A header Timestamp further than this from the transfer's previous packet's (modulo the 1 s timer) starts a new
+    /// transfer. Catches transfers read back to back from a socket buffer. Zero disables.
+    /// </summary>
+    public TimeSpan SenderTimestampWindow { get; set; } = TimeSpan.FromMilliseconds(250);
+
     public int Pending { get { lock (_gate) return _open.Count; } }
+
+    /// <summary>Payload bytes held by open transfers.</summary>
+    public long BufferedBytes { get { lock (_gate) return _buffered; } }
 
     /// <summary>Adds a chunk; returns the data when this chunk completes a transfer.</summary>
     public AssembledData? Add(TCNetPacket packet, EndPoint? source = null)
@@ -71,34 +104,53 @@ public sealed class ChunkAssembler
 
         var now = DateTime.UtcNow;
         var key = new Key(source?.ToString() ?? "", packet.NodeId, packet.MessageType, data, layer, app);
+        var baseKey = key with { Layer = 0 };
 
         lock (_gate)
         {
             Prune(now);
-            if (!_open.TryGetValue(key, out var t) || t.Total != total || t.Size != size ||
-                (t.Parts.TryGetValue(number, out var old) && !old.AsSpan().SequenceEqual(payload)))
+            if (_base.TryGetValue(baseKey, out uint locked) && number == (locked == 0 ? total : 0)) return null;
+
+            if (!_open.TryGetValue(key, out var t) || StartsNewTransfer(t, packet.Timestamp, total, size, number, payload, now))
             {
-                if (!_open.ContainsKey(key) && _open.Count >= MaxPendingTransfers) EvictOldest();
+                if (t is not null) Remove(key);
+                else if (_open.Count >= MaxPendingTransfers) EvictOldest(key);
                 t = new Transfer { Total = total, Size = size };
                 _open[key] = t;
             }
+            t.Touched = now;
+            t.Stamp = packet.Timestamp;
 
+            if (number == total && t.Parts.ContainsKey(0)) return null;
             if (!t.Parts.ContainsKey(number))
             {
-                t.Bytes += payload.Length;
-                if (t.Bytes > MaxTransferBytes)
+                if (t.Bytes + payload.Length > MaxTransferBytes)
                 {
-                    _open.Remove(key);
+                    Remove(key);
                     return null;
                 }
+                while (_buffered + payload.Length > MaxBufferedBytes && _open.Count > 1) EvictOldest(key);
+                if (_buffered + payload.Length > MaxBufferedBytes)
+                {
+                    Remove(key);
+                    return null;
+                }
+                if (number == 0 && t.Parts.Remove(total, out var stray))
+                {
+                    t.Bytes -= stray.Length;
+                    _buffered -= stray.Length;
+                }
                 t.Parts[number] = payload;
+                t.Bytes += payload.Length;
+                _buffered += payload.Length;
             }
-            t.Touched = now;
 
-            if (t.Parts.Count < total || !IsComplete(t)) return null;
-            _open.Remove(key);
+            if (t.Parts.Count < total || CompleteBase(t) is not { } first) return null;
+            Remove(key);
+            if (_base.Count >= MaxLockedBases) _base.Clear();
+            _base[baseKey] = first;
 
-            var parts = OrderedParts(t);
+            var parts = OrderedParts(t, first);
             var result = new byte[parts.Sum(p => p.Length)];
             int at = 0;
             foreach (var p in parts) { p.CopyTo(result, at); at += p.Length; }
@@ -108,36 +160,62 @@ public sealed class ChunkAssembler
         }
     }
 
-    private static bool IsComplete(Transfer t) => Covers(t, 0) || Covers(t, 1);
-
-    private static bool Covers(Transfer t, uint first)
+    private bool StartsNewTransfer(Transfer t, uint stamp, uint total, uint size, uint number, byte[] payload, DateTime now)
     {
-        for (uint i = first; i < first + t.Total; i++)
-            if (!t.Parts.ContainsKey(i)) return false;
-        return true;
+        if (t.Total != total || t.Size != size) return true;
+        if (t.Parts.TryGetValue(number, out var old) && !old.AsSpan().SequenceEqual(payload)) return true;
+        if (now - t.Touched > MaxPacketGap) return true;
+        return SenderTimestampWindow > TimeSpan.Zero && StampDistance(t.Stamp, stamp) > SenderTimestampWindow.TotalMicroseconds;
     }
 
-    private static List<byte[]> OrderedParts(Transfer t)
+    /// <summary>Distance between two header timestamps on the sender's 0–999999 µs timer.</summary>
+    private static uint StampDistance(uint a, uint b)
     {
-        uint first = Covers(t, 0) ? 0u : 1u;
+        const uint wrap = TCNetConstants.MicrosPerSecond;
+        uint d = (a % wrap + wrap - b % wrap) % wrap;
+        return Math.Min(d, wrap - d);
+    }
+
+    /// <summary>First number of a complete transfer (0 when part 0 is held, else 1), or null while parts are missing.</summary>
+    private static uint? CompleteBase(Transfer t)
+    {
+        uint first = t.Parts.ContainsKey(0) ? 0u : 1u;
+        for (uint i = first; i < first + t.Total; i++)
+            if (!t.Parts.ContainsKey(i)) return null;
+        return first;
+    }
+
+    private static List<byte[]> OrderedParts(Transfer t, uint first)
+    {
         var list = new List<byte[]>((int)t.Total);
         for (uint i = first; i < first + t.Total; i++) list.Add(t.Parts[i]);
         return list;
     }
 
+    /// <summary>Drops open transfers and the numbering bases learned from senders.</summary>
     public void Clear()
     {
-        lock (_gate) _open.Clear();
+        lock (_gate)
+        {
+            _open.Clear();
+            _base.Clear();
+            _buffered = 0;
+        }
+    }
+
+    private void Remove(Key key)
+    {
+        if (_open.Remove(key, out var t)) _buffered -= t.Bytes;
     }
 
     private void Prune(DateTime now)
     {
-        foreach (var k in _open.Where(kv => now - kv.Value.Touched > Timeout).Select(kv => kv.Key).ToList()) _open.Remove(k);
+        foreach (var k in _open.Where(kv => now - kv.Value.Touched > Timeout).Select(kv => kv.Key).ToList()) Remove(k);
     }
 
-    private void EvictOldest()
+    private void EvictOldest(Key keep)
     {
-        var oldest = _open.MinBy(kv => kv.Value.Touched);
-        _open.Remove(oldest.Key);
+        var oldest = _open.Where(kv => kv.Key != keep).MinBy(kv => kv.Value.Touched);
+        if (oldest.Value is not null) Remove(oldest.Key);
     }
 }

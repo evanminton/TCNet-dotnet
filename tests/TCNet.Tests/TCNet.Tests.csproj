@@ -12,5 +12,13 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <ProjectReference Include="../../src/TCNet/TCNet.csproj" />
+    <!-- Built (not referenced) so CliTests can run the tcnet utility; its path is passed as assembly metadata. -->
+    <ProjectReference Include="../../tools/TCNet.Utility/TCNet.Utility.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TCNetUtility</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../tools/TCNet.Utility/bin/$(Configuration)/$(TargetFramework)/TCNet.Utility.dll'))</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>

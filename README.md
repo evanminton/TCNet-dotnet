@@ -117,12 +117,17 @@ Where the PDF contradicts itself the library follows what devices send and docum
 
 - Metadata text is UTF-8 below protocol 3.5 and UTF-16LE from 3.5.
 - Time packet: LC Time is read at byte 52 and the LC beat marker at 95.
-- Cue Data prints cue 1 at byte 47, overlapping Loop OUT. An empty cue 1 is not written; on read, bytes 47–49 count as
-  cue 1 only when the rest of cue 1 is set or the loop bytes are clearly not a loop. `CueLayout.AfterLoop` places cue 1
-  at byte 50 instead.
-- Chunked data is numbered from 0; reassembly accepts 0- or 1-based numbering.
-- Master election: longest uptime wins; within 2 s it is a tie and the lower Node ID wins; after three rounds the
-  lowest ID wins.
+- Cue Data prints cue 1 at byte 47, overlapping Loop OUT. An empty cue 1 is not written; a set cue 1 zeroes byte 46 and,
+  if it would leave bytes 50–68 zero, marks byte 68 (unused). On read, bytes 47–49 are cue 1 when bytes 50–68 are set
+  (or they can only be a sparse cue: a Loop OUT of 4.7 h or more), else Loop OUT; every cue 1 and Loop OUT below 2^24 ms
+  that the library writes round-trips. `CueLayout.AfterLoop` places cue 1 at byte 50 instead.
+- Cue Data is stated as 436 bytes but the table ends at 443; 443 is sent and 435+ bytes are accepted unpadded.
+- Chunked data is numbered from 0; reassembly accepts 0- or 1-based numbering, locked per sender after its first
+  transfer. A transfer's parts are dropped when a packet belongs to a newer transfer (new size or count, changed part,
+  a gap of over 1 s, or a sender Timestamp over 250 ms away).
+- Master election: longest uptime wins; within 2 s it is a tie and the lower Node ID, then IP address, wins; after
+  three rounds the lowest ID (then address) wins. An elected master steps back for a configured master (never seen as
+  Auto, or switched to Master well after the election); of two elected masters, the lower ID (then address) stays.
 
 ## License
 

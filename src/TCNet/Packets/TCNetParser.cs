@@ -40,7 +40,10 @@ public static class TCNetParser
         _ => new UnknownPacket((byte)type),
     };
 
-    public static bool TryParse(ReadOnlySpan<byte> d, out TCNetPacket? packet, out string? error)
+    public static bool TryParse(ReadOnlySpan<byte> d, out TCNetPacket? packet, out string? error) =>
+        TryParse(d, Strict, out packet, out error);
+
+    internal static bool TryParse(ReadOnlySpan<byte> d, bool strict, out TCNetPacket? packet, out string? error)
     {
         packet = null;
         if (d.Length < TCNetConstants.HeaderLength)
@@ -57,9 +60,9 @@ public static class TCNetParser
         var type = (MessageType)d[7];
         var p = Create(type, d.Length > 24 ? (DataType)d[24] : 0);
         int need = p.Length;
-        if (d.Length < need && Strict)
+        if (d.Length < p.MinLength && strict)
         {
-            error = $"{p.Name} needs {need} bytes, got {d.Length}.";
+            error = $"{p.Name} needs {p.MinLength} bytes, got {d.Length}.";
             return false;
         }
 

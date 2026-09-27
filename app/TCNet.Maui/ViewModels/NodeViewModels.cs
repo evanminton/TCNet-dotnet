@@ -104,7 +104,7 @@ public sealed class NodeViewModel : PollingViewModel, IQueryAttributable
             info.Add(new("Auto Master Mode", ((byte)st.AutoMasterMode).ToString(), TCNetText.Describe(st.AutoMasterMode)));
         }
         if (n.Mixer is { } mx) info.Add(new("Mixer", mx.MixerName, mx.Summary));
-        Replace(Info, info);
+        Info.Update(info);
 
         var layers = new List<Row>();
         for (int i = 0; i < 8; i++)
@@ -122,14 +122,7 @@ public sealed class NodeViewModel : PollingViewModel, IQueryAttributable
             };
             layers.Add(new($"Layer {TCNetText.LayerLabel(i)}", value, string.Join(" · ", extra.Where(x => x is not null))));
         }
-        Replace(Layers, layers);
-    }
-
-    private static void Replace<T>(ObservableCollection<T> target, List<T> items)
-    {
-        if (target.SequenceEqual(items)) return;
-        target.Clear();
-        foreach (var x in items) target.Add(x);
+        Layers.Update(layers);
     }
 
     private async Task Run(Func<TCNetNode, RemoteNode, Task> action)

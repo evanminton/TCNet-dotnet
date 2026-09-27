@@ -404,10 +404,6 @@ public class LayoutTests
         Assert.True(p.WasPadded);
         Assert.Equal("", p.VendorName);
 
-        TCNetParser.Strict = true;
-        try { Assert.False(TCNetPacket.TryParse(shortOptIn, out _, out _)); }
-        finally { TCNetParser.Strict = false; }
-
         var raw = new byte[30];
         "TCN"u8.CopyTo(raw.AsSpan(4));
         raw[7] = 99;
@@ -439,5 +435,23 @@ public class LayoutTests
         Assert.Equal(bytes, r.ToArray());
         Assert.True(r.Describe().Count >= 9);
         Assert.Contains(p.Name, r.ToDisplayString());
+    }
+}
+
+/// <summary>Tests that change process-wide parser settings; they run on their own, after the parallel tests.</summary>
+[CollectionDefinition(nameof(GlobalParserSettings), DisableParallelization = true)]
+public class GlobalParserSettings;
+
+[Collection(nameof(GlobalParserSettings))]
+public class StrictParserTests
+{
+    [Fact]
+    public void Strict_RejectsShortPackets()
+    {
+        var shortOptIn = new OptInPacket { VendorName = "X" }.ToArray()[..30];
+        TCNetParser.Strict = true;
+        try { Assert.False(TCNetPacket.TryParse(shortOptIn, out _, out _)); }
+        finally { TCNetParser.Strict = false; }
+        Assert.True(TCNetPacket.TryParse(shortOptIn, out _, out _));
     }
 }

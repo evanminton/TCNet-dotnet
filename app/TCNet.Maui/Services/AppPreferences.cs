@@ -5,6 +5,9 @@ public sealed class AppPreferences
 {
     private static IPreferences P => Microsoft.Maui.Storage.Preferences.Default;
 
+    // Read for every packet on the receive thread: cached here instead of hitting Preferences each time.
+    private volatile bool _logTime = P.Get(nameof(LogTime), false), _logSent = P.Get(nameof(LogSent), true);
+
     public AppPreferences()
     {
         if (!P.ContainsKey(nameof(NodeId))) NodeId = Random.Shared.Next(1, 65535);
@@ -27,6 +30,6 @@ public sealed class AppPreferences
     public bool Election { get => P.Get(nameof(Election), false); set => P.Set(nameof(Election), value); }
     public bool Simulate { get => P.Get(nameof(Simulate), false); set => P.Set(nameof(Simulate), value); }
     public int TimeIntervalMs { get => P.Get(nameof(TimeIntervalMs), 20); set => P.Set(nameof(TimeIntervalMs), value); }
-    public bool LogTime { get => P.Get(nameof(LogTime), false); set => P.Set(nameof(LogTime), value); }
-    public bool LogSent { get => P.Get(nameof(LogSent), true); set => P.Set(nameof(LogSent), value); }
+    public bool LogTime { get => _logTime; set { _logTime = value; P.Set(nameof(LogTime), value); } }
+    public bool LogSent { get => _logSent; set { _logSent = value; P.Set(nameof(LogSent), value); } }
 }

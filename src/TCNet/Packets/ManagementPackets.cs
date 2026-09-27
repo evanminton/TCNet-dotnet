@@ -116,7 +116,9 @@ public sealed class StatusPacket : TCNetPacket
     /// <summary>Wire order 1, 2, 3, 4, A, B, M, C.</summary>
     public StatusLayer[] Layers { get; } = new StatusLayer[TCNetConstants.LayerCount];
 
-    public StatusLayer this[Layer layer] => Layers[(int)layer - 1];
+    /// <summary>Layer 1–4, A, B, M or C.</summary>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="Layer.None"/> or an undefined value.</exception>
+    public StatusLayer this[Layer layer] => Layers[LayerIndex(layer)];
 
     public SmpteMode SmpteMode { get; set; }
     public AutoMasterMode AutoMasterMode { get; set; }

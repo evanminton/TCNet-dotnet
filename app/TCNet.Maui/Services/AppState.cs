@@ -51,9 +51,10 @@ public sealed class AppState : Bindable
 {
     private const int MaxRows = 1000;
     private readonly ConcurrentQueue<PacketRow> _inbox = new();
+    private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private IDispatcherTimer? _timer;
     private string _status = "Stopped", _filter = "";
-    private bool _running, _paused;
+    private bool _running, _paused, _busy;
 
     public AppState(AppPreferences prefs) => Prefs = prefs;
 
@@ -65,14 +66,36 @@ public sealed class AppState : Bindable
     public ObservableCollection<string> Log { get; } = [];
 
     public bool IsRunning { get => _running; private set => Set(ref _running, value); }
+    /// <summary>False while the node is starting, stopping or restarting.</summary>
+    public bool IsIdle { get => !_busy; private set => Set(ref _busy, !value); }
     public string Status { get => _status; private set => Set(ref _status, value); }
     public bool Paused { get => _paused; set => Set(ref _paused, value); }
     public string Filter { get => _filter; set => Set(ref _filter, value ?? ""); }
 
-    /// <summary>Raised on the UI thread when chunked data completes.</summary>
-    public event EventHandler<DataEventArgs>? DataArrived;
+    public Task StartAsync() => Serialized(StartCoreAsync);
 
-    public async Task StartAsync()
+    public Task StopAsync() => Serialized(StopCoreAsync);
+
+    public Task RestartAsync() => Serialized(async () =>
+    {
+        await StopCoreAsync();
+        await StartCoreAsync();
+    });
+
+    /// <summary>Start, stop and restart run one at a time, so a node is never shown stopped (or unlocked) while it runs.</summary>
+    private async Task Serialized(Func<Task> action)
+    {
+        await _lifecycle.WaitAsync();
+        IsIdle = false;
+        try { await action(); }
+        finally
+        {
+            IsIdle = true;
+            _lifecycle.Release();
+        }
+    }
+
+    private async Task StartCoreAsync()
     {
         if (Node is not null) return;
         var p = Prefs;
@@ -95,9 +118,8 @@ public sealed class AppState : Bindable
         var node = new TCNetNode(settings);
         node.PacketReceived += OnPacket;
         node.PacketSent += OnPacket;
-        node.NodeDiscovered += (_, e) => Ui(() => AddRow(e.Node));
-        node.NodeLost += (_, e) => Ui(() => RemoveRow(e.Node, e.Reason));
-        node.DataAssembled += (_, e) => Ui(() => DataArrived?.Invoke(this, e));
+        node.NodeDiscovered += (_, e) => Ui(() => { if (Node == node) AddRow(e.Node); });
+        node.NodeLost += (_, e) => Ui(() => { if (Node == node) RemoveRow(e.Node, e.Reason); });
         node.Warning += (_, w) => Ui(() => Note(w));
         node.RoleChanged += (_, r) => Ui(() => { Note($"Role is now {r}"); Status = Describe(node); });
         if (p.Simulate)
@@ -111,15 +133,17 @@ public sealed class AppState : Bindable
         try
         {
             await node.StartAsync();
+            if (p.Simulate) node.StartTimeStream(Playback.BuildTime, TimeSpan.FromMilliseconds(Math.Clamp(p.TimeIntervalMs, 1, 40)));
         }
         catch (Exception ex)
         {
             Status = $"Could not start: {ex.Message}";
             Note(Status);
+            try { await node.DisposeAsync(); }
+            catch (Exception dex) { Note($"Stop: {dex.Message}"); }
             MulticastLock.Release();
             return;
         }
-        if (p.Simulate) node.StartTimeStream(Playback.BuildTime, TimeSpan.FromMilliseconds(Math.Clamp(p.TimeIntervalMs, 1, 40)));
 
         Node = node;
         IsRunning = true;
@@ -133,7 +157,7 @@ public sealed class AppState : Bindable
         $"{n.Settings.NodeName}#{n.Settings.NodeId} · {n.NodeType} · listener {n.ListenerPort} · shared ports {string.Join(", ", n.SharedPorts)} · broadcast {n.BroadcastAddress}"
         + (n.IsStreaming ? " · streaming Time" : "");
 
-    public async Task StopAsync()
+    private async Task StopCoreAsync()
     {
         _timer?.Stop();
         var node = Node;
@@ -148,12 +172,6 @@ public sealed class AppState : Bindable
         Status = "Stopped";
         Raise(nameof(Node));
         MulticastLock.Release();
-    }
-
-    public async Task RestartAsync()
-    {
-        await StopAsync();
-        await StartAsync();
     }
 
     public void ClearPackets()
@@ -214,12 +232,13 @@ public sealed class AppState : Bindable
     }
 
     /// <summary>"bcast:60000", "node:KEY" or "ip:port".</summary>
-    public IPEndPoint? Resolve(string target)
+    public IPEndPoint? Resolve(string? target)
     {
-        if (Node is not { } node) return null;
-        if (target.StartsWith("bcast:", StringComparison.OrdinalIgnoreCase) && int.TryParse(target[6..], out int port))
+        if (Node is not { } node || string.IsNullOrWhiteSpace(target)) return null;
+        target = target.Trim();
+        if (target.StartsWith("bcast:", StringComparison.OrdinalIgnoreCase) && int.TryParse(target[6..], out int port) && port is > 0 and <= IPEndPoint.MaxPort)
             return new IPEndPoint(node.BroadcastAddress, port);
         if (target.StartsWith("node:", StringComparison.OrdinalIgnoreCase)) return node.FindNode(target[5..])?.EndPoint;
-        return IPEndPoint.TryParse(target, out var ep) ? ep : null;
+        return IPEndPoint.TryParse(target, out var ep) && ep.Port > 0 ? ep : null;
     }
 }

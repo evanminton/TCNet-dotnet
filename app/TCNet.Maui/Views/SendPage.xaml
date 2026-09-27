@@ -17,7 +17,7 @@
         <Editor Grid.Row="2" Text="{Binding Hex}" HeightRequest="110" FontFamily="Consolas" AutoSize="Disabled" />
         <Grid Grid.Row="3" ColumnDefinitions="110,200,*,Auto,Auto,Auto" ColumnSpacing="8">
             <Label Text="Target" VerticalOptions="Center" />
-            <Picker Grid.Column="1" ItemsSource="{Binding Targets}" SelectedItem="{Binding Target}" Focused="OnTargetsFocused" />
+            <Picker Grid.Column="1" ItemsSource="{Binding Targets}" SelectedItem="{Binding SelectedTarget}" />
             <Entry Grid.Column="2" Text="{Binding Target}" Placeholder="bcast:60000, node:KEY or 192.168.1.20:65023" />
             <Button Grid.Column="3" Text="Decode" Command="{Binding DecodeCommand}" />
             <Button Grid.Column="4" Text="Send" Command="{Binding SendCommand}" />

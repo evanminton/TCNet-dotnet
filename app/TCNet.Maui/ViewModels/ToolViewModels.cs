@@ -21,11 +21,19 @@ public sealed class MixerViewModel : PollingViewModel
         _app = app;
         RequestCommand = new Command(async () =>
         {
-            if (_app.Node is not { } local) return;
+            if (_app.Node is not { } local) { Header = "The node is not running."; return; }
             foreach (var n in local.Nodes.Where(n => n.IsMasterOrRepeater && n.EndPoint is not null))
             {
-                var r = await local.RequestAsync(n, DataType.Mixer, 0);
-                _app.Note($"Mixer request to {n.NodeName}: {r}");
+                try
+                {
+                    var r = await local.RequestAsync(n, DataType.Mixer, 0);
+                    _app.Note($"Mixer request to {n.NodeName}: {r}");
+                }
+                catch (Exception ex)
+                {
+                    Header = $"Mixer request to {n.NodeName} failed: {ex.Message}";
+                    _app.Note(Header);
+                }
             }
         });
     }
@@ -45,13 +53,11 @@ public sealed class MixerViewModel : PollingViewModel
         Header = $"{mx.MixerName} · mixer ID {mx.MixerId} · {TCNetText.Describe(mx.MixerType)} · from {node.NodeName}";
         Master = mx.MasterFaderLevel / 255.0;
         Crossfader = mx.CrossFader / 255.0;
-        Channels.Clear();
-        foreach (var c in mx.Channels)
-            Channels.Add(new ChannelStrip($"CH{c.Number}", c.FaderLevel / 255.0, c.AudioLevel / 255.0,
-                $"{TCNetText.Describe(c.Source)} · trim {c.TrimLevel} · comp {c.CompLevel} · EQ {c.EqHi}/{c.EqHiMid}/{c.EqLowMid}/{c.EqLow} · filter {c.FilterColor} · send {c.Send} · crossfader {TCNetText.Describe(c.CrossfaderAssign)}"
-                + (c.CueA ? " · CUE A" : "") + (c.CueB ? " · CUE B" : "")));
-        Fields.Clear();
-        foreach (var f in mx.Describe()) Fields.Add(f);
+        // Updated in place: only strips and fields whose values changed are replaced.
+        Channels.Update(mx.Channels.Select(c => new ChannelStrip($"CH{c.Number}", c.FaderLevel / 255.0, c.AudioLevel / 255.0,
+            $"{TCNetText.Describe(c.Source)} · trim {c.TrimLevel} · comp {c.CompLevel} · EQ {c.EqHi}/{c.EqHiMid}/{c.EqLowMid}/{c.EqLow} · filter {c.FilterColor} · send {c.Send} · crossfader {TCNetText.Describe(c.CrossfaderAssign)}"
+            + (c.CueA ? " · CUE A" : "") + (c.CueB ? " · CUE B" : ""))).ToList());
+        Fields.Update(mx.Describe().ToList());
     }
 }
 
@@ -78,6 +84,7 @@ public sealed class SendViewModel : Bindable
     private readonly AppState _app;
     private PacketInfo? _type;
     private string _hex = "", _target = "bcast:60000", _result = "";
+    private string? _selectedTarget;
 
     public SendViewModel(AppState app)
     {
@@ -91,6 +98,7 @@ public sealed class SendViewModel : Bindable
         TimeCommand = new Command(async () => await Quick(n => n.PublishTimeAsync(_app.Playback.BuildTime()), "Time"));
         TargetsCommand = new Command(LoadTargets);
         LoadTargets();
+        _selectedTarget = _target;
         Type = Types[0];
     }
 
@@ -99,7 +107,17 @@ public sealed class SendViewModel : Bindable
     public ObservableCollection<TCNetField> Fields { get; } = [];
     public PacketInfo? Type { get => _type; set { if (Set(ref _type, value)) Build(); } }
     public string Hex { get => _hex; set => Set(ref _hex, value); }
-    public string Target { get => _target; set => Set(ref _target, value); }
+    /// <summary>What is sent to: typed in the entry or copied from the picker.</summary>
+    public string Target { get => _target; set => Set(ref _target, value ?? ""); }
+    /// <summary>The picker's selection; it goes null when the list changes, which leaves <see cref="Target"/> alone.</summary>
+    public string? SelectedTarget
+    {
+        get => _selectedTarget;
+        set
+        {
+            if (Set(ref _selectedTarget, value) && value is not null) Target = value;
+        }
+    }
     public string Result { get => _result; private set => Set(ref _result, value); }
 
     public ICommand BuildCommand { get; }
@@ -112,9 +130,9 @@ public sealed class SendViewModel : Bindable
 
     private void LoadTargets()
     {
-        Targets.Clear();
-        foreach (var p in new[] { TCNetConstants.BroadcastPort, TCNetConstants.TimePort, TCNetConstants.ApplicationPort }) Targets.Add($"bcast:{p}");
-        foreach (var n in _app.Nodes) Targets.Add($"node:{n.Key}");
+        var list = new[] { TCNetConstants.BroadcastPort, TCNetConstants.TimePort, TCNetConstants.ApplicationPort }.Select(p => $"bcast:{p}")
+            .Concat(_app.Nodes.Select(n => $"node:{n.Key}")).ToList();
+        Targets.Update(list);
     }
 
     private void Build()
@@ -162,10 +180,10 @@ public sealed class SendViewModel : Bindable
 
     private async Task Send()
     {
-        if (_app.Node is not { } node) { Result = "The node is not running."; return; }
-        if (_app.Resolve(Target) is not { } ep) { Result = $"Unknown target '{Target}'."; return; }
         try
         {
+            if (_app.Node is not { } node) { Result = "The node is not running."; return; }
+            if (_app.Resolve(Target) is not { } ep) { Result = $"Unknown target '{Target}'."; return; }
             var bytes = Wire.ParseHex(Hex);
             await node.SendRawAsync(bytes, ep);
             Result = $"Sent {bytes.Length} bytes to {ep}.";
@@ -186,6 +204,8 @@ public sealed class DeckRow : Bindable
 {
     private string _line = "";
 
+    // Deck setters and Load lock inside the library (the node streams Time from another thread); the row only uses those
+    // and reads state from the TimePacket snapshot in Refresh.
     public DeckRow(Deck deck)
     {
         Deck = deck;
@@ -214,7 +234,7 @@ public sealed class DeckRow : Bindable
         var l = t.Layers[Deck.Index];
         Line = Deck.TrackId == 0
             ? "empty"
-            : $"{TCNetText.Describe(Deck.State)} · {TCNetUnits.Ms(l.TimeMs)} / {TCNetUnits.Ms(l.TotalMs)} · TC {l.Timecode} · {Deck.Bpm:0.0} BPM · beat {l.BeatMarker} · on air {Deck.OnAir} · {Deck.Artist} – {Deck.Title}";
+            : $"{TCNetText.Describe(l.State)} · {TCNetUnits.Ms(l.TimeMs)} / {TCNetUnits.Ms(l.TotalMs)} · TC {l.Timecode} · {Deck.Bpm:0.0} BPM · beat {l.BeatMarker} · on air {l.OnAir} · {Deck.Artist} – {Deck.Title}";
     }
 }
 
@@ -254,7 +274,7 @@ public sealed class RefGroup(string name, IEnumerable<RefRow> rows) : Observable
 public sealed class ReferenceViewModel : Bindable
 {
     private readonly List<RefGroup> _all = [];
-    private string _search = "";
+    private string _search = "", _copyResult = "";
 
     public ReferenceViewModel()
     {
@@ -269,11 +289,20 @@ public sealed class ReferenceViewModel : Bindable
         _all.Add(new RefGroup("Registered application codes", TCNetText.ApplicationCodes.Select(a => new RefRow(a.Code.ToString("X4"), a.Vendor, a.Url))));
         _all.Add(new RefGroup("Spec notes", TCNetCatalog.Notes.Select(n => new RefRow("", n.Topic, n.Note))));
         Groups = new ObservableCollection<RefGroup>(_all);
-        CopyCommand = new Command(async () => await Clipboard.Default.SetTextAsync(TCNetCatalog.ToMarkdown()));
+        CopyCommand = new Command(async () =>
+        {
+            try
+            {
+                await Clipboard.Default.SetTextAsync(TCNetCatalog.ToMarkdown());
+                CopyResult = "Copied.";
+            }
+            catch (Exception ex) { CopyResult = $"Could not copy: {ex.Message}"; }
+        });
     }
 
     public ObservableCollection<RefGroup> Groups { get; }
     public ICommand CopyCommand { get; }
+    public string CopyResult { get => _copyResult; private set => Set(ref _copyResult, value); }
 
     public string Search
     {

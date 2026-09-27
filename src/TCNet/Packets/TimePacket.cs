@@ -45,7 +45,9 @@ public sealed class TimePacket : TCNetPacket
     public override int Length => TCNetConstants.TimeLength;
 
     public TimeLayer[] Layers { get; } = new TimeLayer[8];
-    public TimeLayer this[Layer layer] => Layers[(int)layer - 1];
+    /// <summary>Layer 1–4, A, B, M or C.</summary>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="Layer.None"/> or an undefined value.</exception>
+    public TimeLayer this[Layer layer] => Layers[LayerIndex(layer)];
 
     /// <summary>General SMPTE mode (byte 105).</summary>
     public SmpteMode SmpteMode { get; set; } = SmpteMode.Fps30;

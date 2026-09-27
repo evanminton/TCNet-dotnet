@@ -6,9 +6,10 @@
              x:DataType="vm:ReferenceViewModel"
              Title="Reference">
     <Grid RowDefinitions="Auto,*" Padding="12" RowSpacing="8">
-        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
             <SearchBar Text="{Binding Search}" Placeholder="Search packets, fields, options, codes and notes (e.g. 'cue', 'BPM', 'SMPTE', '0x')" />
             <Button Grid.Column="1" Text="Copy as Markdown" Command="{Binding CopyCommand}" />
+            <Label Grid.Column="2" Text="{Binding CopyResult}" Style="{StaticResource Caption}" VerticalOptions="Center" />
         </Grid>
         <CollectionView Grid.Row="1" ItemsSource="{Binding Groups}" IsGrouped="True" SelectionMode="None">
             <CollectionView.GroupHeaderTemplate>

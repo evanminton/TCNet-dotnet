@@ -37,8 +37,11 @@ public abstract class TCNetPacket
     /// <summary>Datagram length when parsed (0 when built locally).</summary>
     public int ReceivedLength { get; internal set; }
 
+    /// <summary>Shortest datagram that carries every field (usually <see cref="Length"/>); shorter ones are padded.</summary>
+    public virtual int MinLength => Length;
+
     /// <summary>The datagram was shorter than the spec size and was zero-padded for parsing.</summary>
-    public bool WasPadded => ReceivedLength > 0 && ReceivedLength < Length;
+    public bool WasPadded => ReceivedLength > 0 && ReceivedLength < MinLength;
 
     public Version ProtocolVersion => new(VersionMajor, VersionMinor);
 
@@ -124,6 +127,11 @@ public abstract class TCNetPacket
 
     public override string ToString() =>
         $"{Name} from {NodeName}#{NodeId} ({NodeType})" + (Summary.Length > 0 ? ": " + Summary : "");
+
+    /// <summary>0-based wire index of layer 1–4, A, B, M or C.</summary>
+    protected static int LayerIndex(Layer layer) => layer is >= Layer.L1 and <= Layer.C
+        ? (int)layer - 1
+        : throw new ArgumentOutOfRangeException(nameof(layer), layer, "Not a layer: use L1–L4, A, B, M or C.");
 
     public static bool TryParse(ReadOnlySpan<byte> datagram, out TCNetPacket? packet, out string? error) =>
         TCNetParser.TryParse(datagram, out packet, out error);

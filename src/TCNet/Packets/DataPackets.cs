@@ -197,13 +197,24 @@ public sealed class Cue
 /// Data type 12 · Cue Data: Loop IN (42), Loop OUT (46) and 18 cues of 22 bytes (type +0, in +2, out +6, RGB +11).
 /// </summary>
 /// <remarks>
-/// The spec prints cue 1 at 47, overlapping Loop OUT (46–49). With <see cref="CueLayout.Printed"/> an empty cue 1 is not
-/// written so Loop OUT survives; a set cue 1 owns bytes 47–49. When reading, bytes 47–49 count as cue 1 when cue 1 has other
-/// non-zero bytes, or when they look like a cue on their own (bytes 46 and 48 zero, a type at 47); otherwise they are Loop OUT.
+/// <para>The spec prints cue 1 at 47, overlapping Loop OUT (46–49). With <see cref="CueLayout.Printed"/> an empty cue 1 is
+/// not written so Loop OUT survives; a set cue 1 owns bytes 46–68 (byte 46 is written 0). If cue 1 would leave bytes
+/// 50–68 all zero (only a type and an IN below 256 ms), byte 68, unused by the cue, is written 1 as a marker.</para>
+/// <para>Reading: bytes 50–68 non-zero mean cue 1, all zero mean Loop OUT, except that bytes 46 and 48 zero with a type at
+/// 47 and an IN at 49 (as a Loop OUT, 2^24 ms = 4.7 h or more) read as another sender's sparse cue 1. So every set cue 1,
+/// and every Loop OUT below 2^24 ms, that this library writes round-trips.</para>
+/// <para>The spec states 436 bytes while its table ends at 443 (the last cue's 8 unused bytes); 443 is sent and anything
+/// from 435 bytes (the last cue's colour) is accepted without padding.</para>
 /// </remarks>
 public sealed class CueDataPacket : DataPacket
 {
     public const int CueCount = 18, Stride = 22;
+
+    /// <summary>Bytes of a cue that carry data (type to blue); the rest of the stride is unused.</summary>
+    private const int CueDataLength = 14;
+
+    /// <summary>Written at byte 68 when a set cue 1 would otherwise leave bytes 50–68 zero.</summary>
+    private const int Cue1Marker = 68;
 
     /// <summary>Layout for new instances (and the parser).</summary>
     public static CueLayout DefaultLayout { get; set; } = CueLayout.Printed;
@@ -218,12 +229,13 @@ public sealed class CueDataPacket : DataPacket
     public CueLayout Layout { get; set; } = DefaultLayout;
     public int FirstCueOffset => Layout == CueLayout.AfterLoop ? 50 : 47;
     public override int Length => FirstCueOffset + CueCount * Stride;
+    public override int MinLength => FirstCueOffset + (CueCount - 1) * Stride + CueDataLength;
 
     public uint LoopInMs { get; set; }
     public uint LoopOutMs { get; set; }
     public Cue[] Cues { get; } = new Cue[CueCount];
 
-    /// <summary>True when a set cue 1 occupied bytes 47–49, so Loop OUT could not be read.</summary>
+    /// <summary>True when a set cue 1 occupied bytes 47–49, so Loop OUT could not be read (it reads as 0).</summary>
     public bool LoopOutOverlapped { get; private set; }
 
     protected override void EncodeData(Span<byte> p)
@@ -233,8 +245,10 @@ public sealed class CueDataPacket : DataPacket
         for (int i = 0; i < CueCount; i++)
         {
             var c = Cues[i];
-            if (i == 0 && Layout == CueLayout.Printed && c.IsEmpty) continue;
+            bool printedCue1 = i == 0 && Layout == CueLayout.Printed;
+            if (printedCue1 && c.IsEmpty) continue;
             int o = FirstCueOffset + i * Stride;
+            if (printedCue1) p[46] = 0;
             p[o] = c.Type;
             p[o + 1] = 0;
             Wire.PutU32(p, o + 2, c.InMs);
@@ -242,6 +256,7 @@ public sealed class CueDataPacket : DataPacket
             p[o + 11] = c.Color.R;
             p[o + 12] = c.Color.G;
             p[o + 13] = c.Color.B;
+            if (printedCue1 && p[50..(Cue1Marker + 1)].IndexOfAnyExcept((byte)0) < 0) p[Cue1Marker] = 1;
         }
     }
 
@@ -256,15 +271,15 @@ public sealed class CueDataPacket : DataPacket
             var c = Cues[i];
             if (i == 0 && Layout == CueLayout.Printed)
             {
-                bool restSet = p.Slice(50, 19).IndexOfAnyExcept((byte)0) >= 0;
-                bool looksLikeCue = p[46] == 0 && p[47] != 0 && p[48] == 0;
-                if (!restSet && !looksLikeCue)
+                bool restSet = p[50..(Cue1Marker + 1)].IndexOfAnyExcept((byte)0) >= 0;
+                bool foreignSparseCue = p[46] == 0 && p[47] != 0 && p[48] == 0 && p[49] != 0;
+                if (!restSet && !foreignSparseCue)
                 {
                     c.Type = 0; c.InMs = 0; c.OutMs = 0; c.Color = default;
                     continue;
                 }
-                LoopOutOverlapped = restSet;
-                if (!restSet) LoopOutMs = 0;
+                LoopOutOverlapped = true;
+                LoopOutMs = 0;
             }
             c.Type = p[o];
             c.InMs = Wire.U32(p, o + 2);
@@ -276,7 +291,7 @@ public sealed class CueDataPacket : DataPacket
     protected override void DescribeData(List<TCNetField> f)
     {
         f.Add(new(42, 4, "Loop IN", $"{LoopInMs} ms", TCNetUnits.Ms(LoopInMs)));
-        f.Add(new(46, 4, "Loop OUT", $"{LoopOutMs} ms", LoopOutOverlapped ? "shares bytes 47–49 with cue 1" : TCNetUnits.Ms(LoopOutMs)));
+        f.Add(new(46, 4, "Loop OUT", $"{LoopOutMs} ms", LoopOutOverlapped ? "unreadable: cue 1 overlaps bytes 46–49" : TCNetUnits.Ms(LoopOutMs)));
         for (int i = 0; i < CueCount; i++)
         {
             var c = Cues[i];

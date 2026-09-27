@@ -58,20 +58,28 @@ public static class TCNetNetwork
 
 /// <summary>
 /// Opt-OUT tip: when the master disconnects, the Auto node with the highest uptime (including timestamp) becomes master.
-/// Uptimes within <see cref="TieWindowSeconds"/> tie and go to the lower Node ID.
+/// Uptimes within <see cref="TieWindowSeconds"/> tie and go to the lower Node ID, then the lower IP address (Node IDs
+/// only have to be unique per address).
 /// </summary>
 public static class MasterElection
 {
     public const int TieWindowSeconds = 2;
 
-    public readonly record struct Candidate(ushort NodeId, ushort Uptime, uint Timestamp);
+    public readonly record struct Candidate(ushort NodeId, ushort Uptime, uint Timestamp, IPAddress? Address = null);
 
     /// <summary>True when <paramref name="a"/> beats <paramref name="b"/>.</summary>
     public static bool Beats(Candidate a, Candidate b)
     {
         int diff = a.Uptime - b.Uptime;
         if (Math.Abs(diff) > TieWindowSeconds) return diff > 0;
-        return a.NodeId < b.NodeId;
+        return IdentityBefore(a, b);
+    }
+
+    /// <summary>Deterministic order every node agrees on: lower Node ID, then lower IP address.</summary>
+    public static bool IdentityBefore(Candidate a, Candidate b)
+    {
+        if (a.NodeId != b.NodeId) return a.NodeId < b.NodeId;
+        return Compare(a.Address, b.Address) < 0;
     }
 
     public static Candidate? Winner(IEnumerable<Candidate> candidates)
@@ -82,5 +90,16 @@ public static class MasterElection
         return best;
     }
 
-    public static Candidate Of(RemoteNode n) => new(n.NodeId, n.Uptime, n.LastTimestamp);
+    public static Candidate Of(RemoteNode n) => new(n.NodeId, n.Uptime, n.LastTimestamp, n.Address);
+
+    private static int Compare(IPAddress? a, IPAddress? b)
+    {
+        if (a is null || b is null) return (a is null ? 0 : 1) - (b is null ? 0 : 1);
+        var x = a.GetAddressBytes();
+        var y = b.GetAddressBytes();
+        if (x.Length != y.Length) return x.Length - y.Length;
+        for (int i = 0; i < x.Length; i++)
+            if (x[i] != y[i]) return x[i] - y[i];
+        return 0;
+    }
 }

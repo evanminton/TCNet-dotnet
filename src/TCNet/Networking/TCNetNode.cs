@@ -65,9 +65,9 @@ public sealed class TCNetNode : IAsyncDisposable
 {
     private readonly Dictionary<string, RemoteNode> _nodes = new();
     private readonly object _nodesGate = new();
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<RequestResult>> _requests = new();
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<TimeSyncResult>> _syncs = new();
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<ErrorNotificationPacket>> _controls = new();
+    private readonly ConcurrentDictionary<string, Pending<RequestResult>> _requests = new();
+    private readonly ConcurrentDictionary<string, Pending<TimeSyncResult>> _syncs = new();
+    private readonly ConcurrentDictionary<string, Pending<ErrorNotificationPacket>> _controls = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _controlQueues = new();
     private readonly SemaphoreSlim _life = new(1, 1);
     private readonly byte[] _seq = new byte[256];
@@ -75,11 +75,14 @@ public sealed class TCNetNode : IAsyncDisposable
     private readonly List<Task> _loops = [];
     private Socket? _socket;
     private CancellationTokenSource? _cts;
+    private Task? _housekeeping;
     private HashSet<IPAddress> _local = [];
     private CancellationTokenSource? _streamCts;
     private Task? _stream;
+    private readonly object _streamGate = new();
     private int _electionRounds = -1;
     private bool _elected;
+    private DateTime _electedAt;
     private long _received, _sent;
 
     public TCNetNode(NodeSettings? settings = null)
@@ -161,7 +164,8 @@ public sealed class TCNetNode : IAsyncDisposable
                 int port = ((IPEndPoint)s.LocalEndPoint!).Port;
                 _loops.Add(Task.Run(() => ReceiveLoop(s, port, ct)));
             }
-            _loops.Add(Task.Run(() => Housekeeping(ct)));
+            _housekeeping = Task.Run(() => Housekeeping(ct));
+            _loops.Add(_housekeeping);
         }
         finally { _life.Release(); }
     }
@@ -174,6 +178,9 @@ public sealed class TCNetNode : IAsyncDisposable
         {
             if (_cts is null) return;
             await StopTimeStreamAsync().ConfigureAwait(false);
+            // Stop Opt-IN first, so no Opt-IN can follow the Opt-OUT.
+            _cts.Cancel();
+            try { await Task.WhenAll(_loops.Where(t => t == _housekeeping)).ConfigureAwait(false); } catch { }
             try
             {
                 var bye = new OptOutPacket { NodeCount = (ushort)Nodes.Count, ListenerPort = (ushort)ListenerPort };
@@ -181,9 +188,8 @@ public sealed class TCNetNode : IAsyncDisposable
                 foreach (var n in Nodes)
                     if (n.EndPoint is { } ep) await SendAsync(bye, ep).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is SocketException or ObjectDisposedException or InvalidOperationException) { }
+            catch (Exception ex) { Warn($"Opt-OUT: {ex.Message}"); }
 
-            _cts.Cancel();
             _socket?.Dispose();
             foreach (var s in _shared) s.Dispose();
             try { await Task.WhenAll(_loops).ConfigureAwait(false); } catch { }
@@ -194,9 +200,10 @@ public sealed class TCNetNode : IAsyncDisposable
             _cts = null;
             lock (_nodesGate) _nodes.Clear();
             Assembler.Clear();
-            foreach (var t in _requests.Values) t.TrySetCanceled();
-            foreach (var t in _syncs.Values) t.TrySetCanceled();
-            foreach (var t in _controls.Values) t.TrySetCanceled();
+            foreach (var t in _requests.Values) t.Tcs.TrySetCanceled();
+            foreach (var t in _syncs.Values) t.Tcs.TrySetCanceled();
+            foreach (var t in _controls.Values) t.Tcs.TrySetCanceled();
+            _controlQueues.Clear();
             _requests.Clear();
             _syncs.Clear();
             _controls.Clear();
@@ -220,7 +227,7 @@ public sealed class TCNetNode : IAsyncDisposable
     {
         if (NodeType == type) return;
         NodeType = type;
-        RoleChanged?.Invoke(this, type);
+        Raise(RoleChanged, type);
     }
 
     // ─────────────── sockets ───────────────
@@ -308,7 +315,7 @@ public sealed class TCNetNode : IAsyncDisposable
     {
         if (!TCNetParser.TryParse(data, out var packet, out var error))
         {
-            InvalidDatagram?.Invoke(this, new InvalidDatagramEventArgs(data.ToArray(), from, port, error!));
+            Raise(InvalidDatagram, new InvalidDatagramEventArgs(data.ToArray(), from, port, error!));
             return;
         }
 
@@ -317,7 +324,7 @@ public sealed class TCNetNode : IAsyncDisposable
         Interlocked.Increment(ref _received);
 
         var node = own ? null : Track(packet, from);
-        PacketReceived?.Invoke(this, new PacketEventArgs(packet, from, port, false, node));
+        Raise(PacketReceived, new PacketEventArgs(packet, from, port, false, node));
         if (node is null) return;
 
         switch (packet)
@@ -333,7 +340,7 @@ public sealed class TCNetNode : IAsyncDisposable
                 break;
             case DataPacket dp: OnData(dp, from, node); break;
             case ApplicationDataPacket ap:
-                if (Assembler.Add(ap, from) is { } app) DataAssembled?.Invoke(this, new DataEventArgs(app, node));
+                if (Assembler.Add(ap, from) is { } app) Raise(DataAssembled, new DataEventArgs(app, node));
                 break;
         }
     }
@@ -361,7 +368,8 @@ public sealed class TCNetNode : IAsyncDisposable
 
         if (p is OptOutPacket)
         {
-            NodeLost?.Invoke(this, new NodeEventArgs(node, "Opt-OUT"));
+            DropControlQueue(node.Key);
+            Raise(NodeLost, new NodeEventArgs(node, "Opt-OUT"));
             if (node.NodeType == NodeType.Master) BeginElection();
             return null;
         }
@@ -370,6 +378,8 @@ public sealed class TCNetNode : IAsyncDisposable
         node.NodeName = p.NodeName;
         node.NodeType = p.NodeType;
         node.EverAuto |= p.NodeType == NodeType.Auto;
+        if (p.NodeType != NodeType.Master) node.MasterSince = null;
+        else node.MasterSince ??= DateTime.UtcNow;
         node.NodeOptions = p.NodeOptions;
         node.ProtocolVersion = p.ProtocolVersion;
         node.LastTimestamp = p.Timestamp;
@@ -398,11 +408,10 @@ public sealed class TCNetNode : IAsyncDisposable
                 break;
         }
 
-        if (created) NodeDiscovered?.Invoke(this, new NodeEventArgs(node));
-        else if (changed) NodeChanged?.Invoke(this, new NodeEventArgs(node));
+        if (created) Raise(NodeDiscovered, new NodeEventArgs(node));
+        else if (changed) Raise(NodeChanged, new NodeEventArgs(node));
 
-        if (node.NodeType == NodeType.Master && NodeType == NodeType.Master && _elected &&
-            (!node.EverAuto || node.NodeId < Settings.NodeId))
+        if (node.NodeType == NodeType.Master && NodeType == NodeType.Master && _elected && ShouldYieldTo(node))
         {
             _elected = false;
             ChangeRole(NodeType.Auto);
@@ -414,7 +423,7 @@ public sealed class TCNetNode : IAsyncDisposable
     {
         var old = node.Status;
         node.Status = st;
-        NodeChanged?.Invoke(this, new NodeEventArgs(node));
+        Raise(NodeChanged, new NodeEventArgs(node));
         if (!Settings.AutoRequestMetadata && !Settings.AutoRequestMetrics) return;
         for (int i = 0; i < 8; i++)
         {
@@ -453,7 +462,7 @@ public sealed class TCNetNode : IAsyncDisposable
                     case DataType.LowResArtwork: node.Artwork[i] = data.Data; break;
                 }
             }
-            DataAssembled?.Invoke(this, new DataEventArgs(data, node));
+            Raise(DataAssembled, new DataEventArgs(data, node));
             Complete(node, dp.DataType, dp.LayerId, new RequestResult(dp.DataType, dp.LayerId, dp, data, null, false));
         }
         else Complete(node, dp.DataType, dp.LayerId, new RequestResult(dp.DataType, dp.LayerId, dp, null, null, false));
@@ -463,7 +472,7 @@ public sealed class TCNetNode : IAsyncDisposable
     {
         if (en.RequestType is (ushort)MessageType.Control or (ushort)MessageType.TextData)
         {
-            if (_controls.TryRemove(node.Key, out var c)) c.TrySetResult(en);
+            if (_controls.TryRemove(node.Key, out var c)) c.Tcs.TrySetResult(en);
             return;
         }
         var type = (DataType)en.DataType;
@@ -474,7 +483,7 @@ public sealed class TCNetNode : IAsyncDisposable
 
     private void Complete(RemoteNode n, DataType t, byte layer, RequestResult r)
     {
-        if (_requests.TryRemove(RequestKey(n, t, layer), out var tcs)) tcs.TrySetResult(r);
+        if (_requests.TryRemove(RequestKey(n, t, layer), out var p)) p.Tcs.TrySetResult(r);
     }
 
     private void OnTimeSync(TimeSyncPacket ts, IPEndPoint from, RemoteNode node)
@@ -488,8 +497,8 @@ public sealed class TCNetNode : IAsyncDisposable
         var result = TimeSync.Compute(ts, Clock.Timestamp);
         node.Sync = result;
         node.SyncedAt = DateTime.UtcNow;
-        TimeSynced?.Invoke(this, new SyncEventArgs(node, result));
-        if (_syncs.TryRemove(node.Key, out var tcs)) tcs.TrySetResult(result);
+        Raise(TimeSynced, new SyncEventArgs(node, result));
+        if (_syncs.TryRemove(node.Key, out var p)) p.Tcs.TrySetResult(result);
     }
 
     private void OnRequest(RequestPacket rq, IPEndPoint from, RemoteNode node)
@@ -538,8 +547,9 @@ public sealed class TCNetNode : IAsyncDisposable
         using var timer = new PeriodicTimer(Settings.OptInInterval);
         do
         {
+            // Every step is guarded: one failure (a handler, a provider, the network) must never stop Opt-IN.
             try { await SendOptInAsync().ConfigureAwait(false); }
-            catch (Exception ex) when (ex is SocketException or ObjectDisposedException or InvalidOperationException) { if (ct.IsCancellationRequested) break; Warn($"Opt-IN: {ex.Message}"); }
+            catch (Exception ex) { if (ct.IsCancellationRequested) break; Warn($"Opt-IN: {ex.Message}"); }
 
             if (Settings.SendStatus ?? NodeType is NodeType.Master or NodeType.Repeater)
             {
@@ -547,19 +557,25 @@ public sealed class TCNetNode : IAsyncDisposable
                 catch (Exception ex) { if (ct.IsCancellationRequested) break; Warn($"Status: {ex.Message}"); }
             }
 
-            Prune();
-            ElectionTick();
-
-            if (Settings.AutoTimeSync)
+            try
             {
+                Prune();
+                ElectionTick();
+
                 var now = DateTime.UtcNow;
-                foreach (var n in Nodes)
+                var known = Nodes;
+                foreach (var k in lastSync.Keys.Where(k => known.All(n => n.Key != k)).ToList()) lastSync.Remove(k);
+                if (Settings.AutoTimeSync)
                 {
-                    if (n.EndPoint is null || (lastSync.TryGetValue(n.Key, out var t) && now - t < Settings.TimeSyncInterval)) continue;
-                    lastSync[n.Key] = now;
-                    _ = Quietly(TimeSyncAsync(n));
+                    foreach (var n in known)
+                    {
+                        if (n.EndPoint is null || (lastSync.TryGetValue(n.Key, out var t) && now - t < Settings.TimeSyncInterval)) continue;
+                        lastSync[n.Key] = now;
+                        _ = Quietly(TimeSyncAsync(n));
+                    }
                 }
             }
+            catch (Exception ex) { Warn($"Housekeeping: {ex.Message}"); }
         }
         while (await Tick(timer, ct).ConfigureAwait(false));
     }
@@ -568,6 +584,35 @@ public sealed class TCNetNode : IAsyncDisposable
     {
         try { return await t.WaitForNextTickAsync(ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { return false; }
+    }
+
+    /// <summary>
+    /// An elected master steps back for a master that was configured (never seen as Auto, or that became master well
+    /// after our election, i.e. by hand). Between two masters elected at about the same time, the lower Node ID,
+    /// then IP address, stays.
+    /// </summary>
+    private bool ShouldYieldTo(RemoteNode other)
+    {
+        if (!other.EverAuto) return true;
+        var window = Settings.OptInInterval * 5;
+        if (other.MasterSince is { } since && since - _electedAt > window) return true;
+        return MasterElection.IdentityBefore(MasterElection.Of(other), Self(other.Address));
+    }
+
+    /// <summary>This node as a candidate, with the local address other nodes on <paramref name="peer"/>'s network see.</summary>
+    private MasterElection.Candidate Self(IPAddress? peer) =>
+        new(Settings.NodeId, Clock.Uptime, Clock.Timestamp, LocalAddressFacing(peer));
+
+    private IPAddress? LocalAddressFacing(IPAddress? peer)
+    {
+        if (!Settings.LocalAddress.Equals(IPAddress.Any)) return Settings.LocalAddress;
+        if (peer is null) return null;
+        if (_local.Contains(peer)) return peer;
+        // The local address sharing the longest prefix with the peer.
+        var pb = peer.GetAddressBytes();
+        return _local.Where(a => a.AddressFamily == peer.AddressFamily && !IPAddress.IsLoopback(a))
+            .OrderByDescending(a => a.GetAddressBytes().Zip(pb).TakeWhile(t => t.First == t.Second).Count())
+            .FirstOrDefault();
     }
 
     private void Prune()
@@ -579,7 +624,11 @@ public sealed class TCNetNode : IAsyncDisposable
             gone = _nodes.Values.Where(n => n.LastSeen < cutoff).ToList();
             foreach (var n in gone) _nodes.Remove(n.Key);
         }
-        foreach (var n in gone) NodeLost?.Invoke(this, new NodeEventArgs(n, "timeout"));
+        foreach (var n in gone)
+        {
+            DropControlQueue(n.Key);
+            Raise(NodeLost, new NodeEventArgs(n, "timeout"));
+        }
         if (gone.Any(n => n.NodeType == NodeType.Master)) BeginElection();
     }
 
@@ -599,14 +648,15 @@ public sealed class TCNetNode : IAsyncDisposable
             return;
         }
         _electionRounds++;
-        var self = new MasterElection.Candidate(Settings.NodeId, Clock.Uptime, Clock.Timestamp);
-        var others = nodes.Where(n => n.NodeType == NodeType.Auto).Select(MasterElection.Of).ToList();
+        var others = nodes.Where(n => n.NodeType == NodeType.Auto).ToList();
+        // After 3 undecided rounds (uptime estimates can disagree near the tie window) fall back to identity only.
         bool win = _electionRounds > 3
-            ? others.All(o => Settings.NodeId < o.NodeId)
-            : others.All(o => MasterElection.Beats(self, o));
+            ? others.All(o => MasterElection.IdentityBefore(Self(o.Address), MasterElection.Of(o)))
+            : others.All(o => MasterElection.Beats(Self(o.Address), MasterElection.Of(o)));
         if (!win) return;
         _electionRounds = -1;
         _elected = true;
+        _electedAt = DateTime.UtcNow;
         ChangeRole(NodeType.Master);
     }
 
@@ -669,7 +719,7 @@ public sealed class TCNetNode : IAsyncDisposable
         if (stamp) Stamp(packet);
         await s.SendToAsync(packet.ToArray(), SocketFlags.None, to, ct).ConfigureAwait(false);
         Interlocked.Increment(ref _sent);
-        PacketSent?.Invoke(this, new PacketEventArgs(packet, to, to.Port, true, null));
+        Raise(PacketSent, new PacketEventArgs(packet, to, to.Port, true, null));
     }
 
     public Task SendAsync(TCNetPacket packet, RemoteNode node, CancellationToken ct = default) =>
@@ -682,7 +732,7 @@ public sealed class TCNetNode : IAsyncDisposable
         await s.SendToAsync(datagram, SocketFlags.None, to, ct).ConfigureAwait(false);
         Interlocked.Increment(ref _sent);
         if (TCNetParser.TryParse(datagram, out var p, out _))
-            PacketSent?.Invoke(this, new PacketEventArgs(p!, to, to.Port, true, null));
+            Raise(PacketSent, new PacketEventArgs(p!, to, to.Port, true, null));
     }
 
     public Task BroadcastAsync(TCNetPacket packet, int port, CancellationToken ct = default) =>
@@ -719,25 +769,36 @@ public sealed class TCNetNode : IAsyncDisposable
     /// <summary>Publishes a Time packet every <paramref name="interval"/> (spec: 1–40 ms).</summary>
     public void StartTimeStream(Func<TimePacket> source, TimeSpan interval)
     {
-        StopTimeStreamAsync().GetAwaiter().GetResult();
-        var cts = new CancellationTokenSource();
-        _streamCts = cts;
-        _stream = Task.Run(async () =>
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        lock (_streamGate)
         {
-            using var timer = new PeriodicTimer(interval);
-            while (await Tick(timer, cts.Token).ConfigureAwait(false))
+            StopTimeStreamAsync().GetAwaiter().GetResult();
+            var cts = new CancellationTokenSource();
+            _streamCts = cts;
+            _stream = Task.Run(async () =>
             {
-                try { await PublishTimeAsync(source(), cts.Token).ConfigureAwait(false); }
-                catch (OperationCanceledException) { break; }
-                catch (Exception ex) when (ex is SocketException or InvalidOperationException or ObjectDisposedException) { Warn($"Time stream: {ex.Message}"); }
-            }
-        });
+                using var timer = new PeriodicTimer(interval);
+                while (await Tick(timer, cts.Token).ConfigureAwait(false))
+                {
+                    try { await PublishTimeAsync(source(), cts.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { break; }
+                    catch (Exception ex) { Warn($"Time stream: {ex.Message}"); }
+                }
+            });
+        }
     }
 
     public async Task StopTimeStreamAsync()
     {
-        var cts = Interlocked.Exchange(ref _streamCts, null);
-        var task = Interlocked.Exchange(ref _stream, null);
+        CancellationTokenSource? cts;
+        Task? task;
+        lock (_streamGate)
+        {
+            cts = _streamCts;
+            task = _stream;
+            _streamCts = null;
+            _stream = null;
+        }
         if (cts is null) return;
         cts.Cancel();
         if (task is not null) { try { await task.ConfigureAwait(false); } catch { } }
@@ -749,34 +810,94 @@ public sealed class TCNetNode : IAsyncDisposable
     private static TimeSpan Clamp(TimeSpan t) =>
         t == Timeout.InfiniteTimeSpan || t.TotalMilliseconds >= int.MaxValue - 1 ? Timeout.InfiniteTimeSpan : t < TimeSpan.Zero ? TimeSpan.Zero : t;
 
-    /// <summary>Starts (or joins) a pending round trip. The request is sent only by the caller that created it.</summary>
-    private async Task<(bool Ok, T Value)> RoundTrip<T>(ConcurrentDictionary<string, TaskCompletionSource<T>> map, string key,
+    /// <summary>A round trip in flight: its answer and how many callers are waiting for it.</summary>
+    private sealed class Pending<T>
+    {
+        public readonly TaskCompletionSource<T> Tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Waiters;
+        public bool Closed;
+    }
+
+    /// <summary>
+    /// Starts (or joins) a pending round trip. The request is sent only by the caller that created it; every caller
+    /// keeps its own timeout and cancellation, and the entry is removed only when the answer arrives, the send fails
+    /// or the last waiter gives up. If the creator's send fails, joiners send their own request.
+    /// </summary>
+    private async Task<(bool Ok, T Value)> RoundTrip<T>(ConcurrentDictionary<string, Pending<T>> map, string key,
         Func<Task> send, TimeSpan? timeout, CancellationToken ct)
     {
-        bool mine = false;
-        var tcs = map.GetOrAdd(key, _ =>
+        var limit = Clamp(timeout ?? Settings.RequestTimeout);
+        var deadline = limit == Timeout.InfiniteTimeSpan ? DateTime.MaxValue : DateTime.UtcNow + limit;
+        TimeSpan Remaining()
         {
-            mine = true;
-            return new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        });
-        if (mine)
+            if (deadline == DateTime.MaxValue) return Timeout.InfiniteTimeSpan;
+            var left = deadline - DateTime.UtcNow;
+            return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+        }
+
+        while (true)
         {
-            try { await send().ConfigureAwait(false); }
-            catch
+            ct.ThrowIfCancellationRequested();
+            var created = new Pending<T>();
+            var p = map.GetOrAdd(key, created);
+            bool mine = ReferenceEquals(p, created);
+            lock (p)
             {
-                map.TryRemove(new KeyValuePair<string, TaskCompletionSource<T>>(key, tcs));
+                if (p.Closed)
+                {
+                    map.TryRemove(new KeyValuePair<string, Pending<T>>(key, p));
+                    continue;
+                }
+                p.Waiters++;
+            }
+
+            if (mine)
+            {
+                try { await send().ConfigureAwait(false); }
+                catch (Exception ex)
+                {
+                    Close(map, key, p);
+                    // Release joiners so they can send their own request.
+                    if (p.Tcs.TrySetException(ex)) _ = p.Tcs.Task.Exception;
+                    throw;
+                }
+            }
+
+            try
+            {
+                return (true, await p.Tcs.Task.WaitAsync(Remaining(), ct).ConfigureAwait(false));
+            }
+            catch (TimeoutException) when (!p.Tcs.Task.IsCompleted)
+            {
+                Leave(map, key, p);
+                return (false, default!);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                Leave(map, key, p);
                 throw;
             }
+            catch (Exception) when (!mine && p.Tcs.Task.IsFaulted)
+            {
+                // The creator could not send; try again with our own request and the time we have left.
+            }
         }
-        try
+    }
+
+    private static void Leave<T>(ConcurrentDictionary<string, Pending<T>> map, string key, Pending<T> p)
+    {
+        lock (p)
         {
-            return (true, await tcs.Task.WaitAsync(Clamp(timeout ?? Settings.RequestTimeout), ct).ConfigureAwait(false));
+            if (--p.Waiters > 0) return;
+            p.Closed = true;
         }
-        catch (TimeoutException)
-        {
-            map.TryRemove(new KeyValuePair<string, TaskCompletionSource<T>>(key, tcs));
-            return (false, default!);
-        }
+        map.TryRemove(new KeyValuePair<string, Pending<T>>(key, p));
+    }
+
+    private static void Close<T>(ConcurrentDictionary<string, Pending<T>> map, string key, Pending<T> p)
+    {
+        lock (p) p.Closed = true;
+        map.TryRemove(new KeyValuePair<string, Pending<T>>(key, p));
     }
 
     /// <summary>Sends a Request and waits for the data (all chunks) or an Error/Notification. Concurrent identical requests share one.</summary>
@@ -870,14 +991,34 @@ public sealed class TCNetNode : IAsyncDisposable
         }
     }
 
+    /// <summary>Forgets a node's control queue when nobody is using it.</summary>
+    private void DropControlQueue(string key)
+    {
+        if (_controlQueues.TryGetValue(key, out var q) && q.CurrentCount == 1)
+            _controlQueues.TryRemove(new KeyValuePair<string, SemaphoreSlim>(key, q));
+    }
+
     private async Task Quietly(Task t)
     {
         try { await t.ConfigureAwait(false); }
-        catch (Exception ex) when (ex is SocketException or InvalidOperationException or ObjectDisposedException or TimeoutException or OperationCanceledException)
-        {
-            if (ex is SocketException) Warn(ex.Message);
-        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException) { }
+        catch (Exception ex) { Warn(ex.Message); }
     }
 
-    private void Warn(string message) => Warning?.Invoke(this, message);
+    private void Warn(string message)
+    {
+        try { Warning?.Invoke(this, message); }
+        catch { /* a failing Warning handler must not take down the loop reporting it */ }
+    }
+
+    /// <summary>Raises an event so that a throwing handler neither stops the other handlers nor the caller.</summary>
+    private void Raise<T>(EventHandler<T>? handler, T args)
+    {
+        if (handler is null) return;
+        foreach (var h in handler.GetInvocationList())
+        {
+            try { ((EventHandler<T>)h)(this, args); }
+            catch (Exception ex) { Warn($"{h.Method.Name} handler: {ex.Message}"); }
+        }
+    }
 }

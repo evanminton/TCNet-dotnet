@@ -11,8 +11,7 @@ public partial class SendPage : ContentPage
         InitializeComponent();
         TypePicker.ItemDisplayBinding = new Binding("Name");
         BindingContext = _vm = vm;
+        // Refreshed in place (the selection and the typed target survive); not on focus, which would change the list under an open picker.
         Appearing += (_, _) => _vm.TargetsCommand.Execute(null);
     }
-
-    private void OnTargetsFocused(object? sender, FocusEventArgs e) => _vm.TargetsCommand.Execute(null);
 }

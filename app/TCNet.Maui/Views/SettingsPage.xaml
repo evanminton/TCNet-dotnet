@@ -12,9 +12,9 @@
                     <Label Text="Node" Style="{StaticResource Heading}" />
                     <Label Text="{Binding App.Status}" Style="{StaticResource Caption}" />
                     <HorizontalStackLayout Spacing="8">
-                        <Button Text="Start" Command="{Binding StartCommand}" />
-                        <Button Text="Stop" Command="{Binding StopCommand}" />
-                        <Button Text="Apply and restart" Command="{Binding ApplyCommand}" />
+                        <Button Text="Start" Command="{Binding StartCommand}" IsEnabled="{Binding App.IsIdle}" />
+                        <Button Text="Stop" Command="{Binding StopCommand}" IsEnabled="{Binding App.IsIdle}" />
+                        <Button Text="Apply and restart" Command="{Binding ApplyCommand}" IsEnabled="{Binding App.IsIdle}" />
                     </HorizontalStackLayout>
                 </VerticalStackLayout>
             </Border>
