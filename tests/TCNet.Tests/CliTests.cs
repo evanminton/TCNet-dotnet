@@ -61,6 +61,17 @@ public class CliTests
         Assert.Contains("Node ID", o);
     }
 
+    [Theory]
+    [InlineData("--markdown")]
+    [InlineData("--Markdown")]
+    [InlineData("--MARKDOWN")]
+    public void Flags_IgnoreCase(string flag)
+    {
+        var (exit, o, e) = Run("reference", flag);
+        Assert.True(exit == 0, e);
+        Assert.Contains("|", o);
+    }
+
     [Fact]
     public void Build_Then_Decode()
     {

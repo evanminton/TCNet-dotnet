@@ -20,7 +20,7 @@ catch (Exception ex) when (ex is FormatException or ArgumentException or Invalid
 /// <summary>tcnet – every TCNet packet, field and option from the command line, in plain English.</summary>
 internal sealed class Tool
 {
-    private static readonly HashSet<string> Flags = ["full", "hex", "markdown", "own", "help", "all"];
+    private static readonly HashSet<string> Flags = new(["full", "hex", "markdown", "own", "help", "all"], StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> Known = new(["iface", "bcast", "name", "id", "port", "role", "type", "from", "seconds", "interval", "out", .. Flags], StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _args = [];
     private readonly Dictionary<string, string?> _opt = new(StringComparer.OrdinalIgnoreCase);

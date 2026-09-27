@@ -368,7 +368,6 @@ public sealed class TCNetNode : IAsyncDisposable
 
         if (p is OptOutPacket)
         {
-            DropControlQueue(node.Key);
             Raise(NodeLost, new NodeEventArgs(node, "Opt-OUT"));
             if (node.NodeType == NodeType.Master) BeginElection();
             return null;
@@ -624,11 +623,7 @@ public sealed class TCNetNode : IAsyncDisposable
             gone = _nodes.Values.Where(n => n.LastSeen < cutoff).ToList();
             foreach (var n in gone) _nodes.Remove(n.Key);
         }
-        foreach (var n in gone)
-        {
-            DropControlQueue(n.Key);
-            Raise(NodeLost, new NodeEventArgs(n, "timeout"));
-        }
+        foreach (var n in gone) Raise(NodeLost, new NodeEventArgs(n, "timeout"));
         if (gone.Any(n => n.NodeType == NodeType.Master)) BeginElection();
     }
 
@@ -867,10 +862,11 @@ public sealed class TCNetNode : IAsyncDisposable
             {
                 return (true, await p.Tcs.Task.WaitAsync(Remaining(), ct).ConfigureAwait(false));
             }
-            catch (TimeoutException) when (!p.Tcs.Task.IsCompleted)
+            catch (TimeoutException)
             {
                 Leave(map, key, p);
-                return (false, default!);
+                // The answer may have landed just as the timeout fired.
+                return p.Tcs.Task.IsCompletedSuccessfully ? (true, p.Tcs.Task.Result) : (false, default!);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -989,13 +985,6 @@ public sealed class TCNetNode : IAsyncDisposable
             return _nodes.Values.FirstOrDefault(x => x.NodeName.Equals(query, StringComparison.OrdinalIgnoreCase))
                    ?? _nodes.Values.FirstOrDefault(x => x.Address.ToString() == query);
         }
-    }
-
-    /// <summary>Forgets a node's control queue when nobody is using it.</summary>
-    private void DropControlQueue(string key)
-    {
-        if (_controlQueues.TryGetValue(key, out var q) && q.CurrentCount == 1)
-            _controlQueues.TryRemove(new KeyValuePair<string, SemaphoreSlim>(key, q));
     }
 
     private async Task Quietly(Task t)
