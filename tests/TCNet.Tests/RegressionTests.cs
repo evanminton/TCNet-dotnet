@@ -84,6 +84,17 @@ public class PacketRegressionTests
     }
 
     [Fact]
+    public void CueData_HotCueNearZero_IsNotMistakenForLoopOut()
+    {
+        var p = new CueDataPacket { LayerId = 1 };
+        p.Cues[0].Type = 1;
+        p.Cues[0].InTime = 0;
+        var back = (CueDataPacket)TCNetPacket.Parse(p.ToArray());
+        Assert.Equal(1, back.Cues[0].Type);
+        Assert.False(back.Cues[0].IsEmpty);
+    }
+
+    [Fact]
     public void TextData_NonUtf8Payload_RoundTripsByteForByte()
     {
         var bytes = new TextDataPacket("x").ToArray();
@@ -196,6 +207,14 @@ public class NodeRegressionTests
             slave.RequestAsync(peer!, DataType.Metadata, 1),
             slave.RequestAsync(peer!, DataType.Metadata, 1));
         Assert.All(results, r => Assert.IsType<MetadataPacket>(r.Packet));
+
+        // A joiner keeps its own timeout: the first caller giving up must not time out the second.
+        master.RequestHandler = (rq, _) => { Thread.Sleep(300); return playback.HandleRequest(rq); };
+        var first = slave.RequestAsync(peer!, DataType.Metrics, 1, TimeSpan.FromMilliseconds(100));
+        var second = slave.RequestAsync(peer!, DataType.Metrics, 1, TimeSpan.FromSeconds(3));
+        Assert.True((await first).TimedOut);
+        Assert.False((await second).TimedOut);
+        master.RequestHandler = (rq, _) => playback.HandleRequest(rq);
 
         var acks = await Task.WhenAll(
             slave.SendControlAsync(peer!, ControlCommand.SetLayerState(1, LayerState.Playing)),

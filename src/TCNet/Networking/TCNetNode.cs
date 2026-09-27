@@ -79,6 +79,7 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _cts;
     private Task? _stopTask;
     private volatile bool _electionPending, _electedMaster;
+    private DateTime _electionPendingSince;
     private readonly object _lifecycleGate = new();
     private HashSet<IPAddress> _localAddresses = [];
     private IPAddress _broadcast = IPAddress.Broadcast;
@@ -697,18 +698,30 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
         }
         if (masterLost) EvaluateElection();
         // Retry an election that could not decide yet, and resolve two elected masters.
-        else if (_electionPending && !_nodes.Values.Any(n => n.NodeType == NodeType.Master)) EvaluateElection();
-        else if (_electedMaster) EvaluateElection();
-        if (_nodes.Values.Any(n => n.NodeType == NodeType.Master)) _electionPending = false;
+        else if (_electionPending || _electedMaster) EvaluateElection();
     }
 
     private void EvaluateElection()
     {
         if (!Settings.AutoMasterElection) return;
+        var nodes = _nodes.Values;
         if (NodeType == NodeType.Auto)
         {
-            _electionPending = true;
-            if (TCNetMasterElection.ShouldPromote(Clock.Uptime, Settings.NodeId, TruncatedName, _nodes.Values))
+            if (nodes.Any(n => n.NodeType == NodeType.Master))
+            {
+                _electionPending = false;
+                return;
+            }
+            var now = DateTime.UtcNow;
+            if (!_electionPending)
+            {
+                _electionPending = true;
+                _electionPendingSince = now;
+            }
+            // Still undecided after a few Opt-IN rounds: decide by Node ID so the nodes cannot all hold back.
+            bool undecided = now - _electionPendingSince > Settings.OptInInterval * 3;
+            if (TCNetMasterElection.ShouldPromote(Clock.Uptime, Settings.NodeId, TruncatedName, nodes)
+                || (undecided && TCNetMasterElection.ShouldPromoteByIdentity(Settings.NodeId, TruncatedName, nodes)))
             {
                 _electionPending = false;
                 SetNodeType(NodeType.Master);
@@ -717,8 +730,8 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
         }
         else if (NodeType == NodeType.Master && _electedMaster)
         {
-            // Two nodes promoted at once: the lower-ranked one returns to Auto.
-            if (_nodes.Values.Any(n => TCNetMasterElection.ShouldDemote(Clock.Uptime, Settings.NodeId, TruncatedName, n)))
+            // Two nodes promoted at once: the one with the higher Node ID returns to Auto.
+            if (nodes.Any(n => TCNetMasterElection.ShouldDemote(Settings.NodeId, TruncatedName, n)))
                 SetNodeType(NodeType.Auto);
         }
     }
@@ -961,25 +974,45 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
     /// Registers a waiter for <paramref name="key"/>, sends, and waits for the response. When a round trip for the
     /// same key is already in flight, <paramref name="joinExisting"/> shares its response (same request); otherwise
     /// the call waits for it to finish first (e.g. control paths, whose responses cannot be told apart).
-    /// The waiter is only ever removed by the call that registered it.
+    /// The waiter is only ever removed by the call that registered it. Each call keeps its own timeout and
+    /// cancellation: if a shared round trip fails for its owner (cancelled, timed out, send error), a joiner
+    /// sends its own request with the time it has left.
     /// </summary>
     private static async Task<T> RoundTripAsync<T>(ConcurrentDictionary<string, TaskCompletionSource<T>> pending, string key, bool joinExisting,
         Func<Task> send, TimeSpan timeout, CancellationToken ct)
     {
+        var deadline = DateTime.UtcNow + timeout;
+        TimeSpan Remaining()
+        {
+            var left = deadline - DateTime.UtcNow;
+            return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+        }
+
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         while (!pending.TryAdd(key, tcs))
         {
             if (!pending.TryGetValue(key, out var existing)) continue;
-            if (joinExisting) return await WithTimeout(existing.Task, timeout, ct, static () => { }).ConfigureAwait(false);
-            try { await existing.Task.WaitAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-            catch (Exception ex) when (ex is not OperationCanceledException) { }
+            if (existing.Task.IsCompleted && !existing.Task.IsCompletedSuccessfully)
+            {
+                // The owner failed and is about to remove its entry; retry once it is gone.
+                await Task.Yield();
+                continue;
+            }
+            try
+            {
+                if (joinExisting) return await WithTimeout(existing.Task, Remaining(), ct, static () => { }).ConfigureAwait(false);
+                await existing.Task.WaitAsync(Remaining(), ct).ConfigureAwait(false);
+            }
+            catch (Exception) when (existing.Task.IsCompleted && !ct.IsCancellationRequested)
+            {
+                // The shared round trip failed for its owner, or (control) the previous one finished: go again.
+            }
         }
 
         try
         {
             await send().ConfigureAwait(false);
-            return await WithTimeout(tcs.Task, timeout, ct, static () => { }).ConfigureAwait(false);
+            return await WithTimeout(tcs.Task, Remaining(), ct, static () => { }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

@@ -92,9 +92,9 @@ tcnet-monitor layout metrics | options | catalog --markdown | interfaces
 
 - Metadata strings are UTF-8 for protocol < 3.5 and UTF-16LE for ≥ 3.5 (256-byte fields), chosen from the sender's header version.
 - Time packet: LC Time is at 52 and LC Beat Marker at 95; the table's 48/94 are typos.
-- Cue Data: cue 1 is printed at 47, overlapping Loop OUT (46–49). The default uses the printed offsets; `CueDataPacket.DefaultLayout = CueTableLayout.AfterLoop` moves the table to 50.
+- Cue Data: cue 1 is printed at 47, overlapping Loop OUT (46–49). The default uses the printed offsets: an empty cue 1 is not written, so Loop OUT survives; a set cue 1 takes the shared bytes. On read, the shared bytes count as Loop OUT only when nothing else of cue 1 is set and Loop OUT > Loop IN > 0. `CueDataPacket.DefaultLayout = CueTableLayout.AfterLoop` moves the table to 50.
 - Metadata (548) and Mixer (270) are sent at the stated sizes, even though their fields end one byte earlier.
-- Chunk numbering is sent 0-based (it matches the beat grid OFFSET formula). Reassembly accepts either base.
-- Uptime rolls over at 12 h. Master election follows the Opt-OUT tip.
+- Chunk numbering is sent 0-based (it matches the beat grid OFFSET formula). Reassembly accepts either base, and bounds packets, bytes and pending transfers (`MaxTotalPackets`, `MaxTransferBytes`, `MaxPendingTransfers`).
+- Uptime rolls over at 12 h. Master election follows the Opt-OUT tip: highest uptime wins, uptimes within 2 s tie and go to the lower Node ID. An election still undecided after 3 Opt-IN rounds goes to the lowest Node ID, and when two elected masters meet, the higher Node ID steps back.
 
 TCNet is by Event Imagineering Group. This library is an independent implementation of the public specification.
