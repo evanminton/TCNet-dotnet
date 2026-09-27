@@ -42,6 +42,12 @@ public sealed class TCNetRemoteNode
     public DateTime LastSeen { get; internal set; }
     public DateTime? LastOptIn { get; internal set; }
 
+    /// <summary>
+    /// True once the node has been seen as Auto. A master that was Auto before took the role by election;
+    /// one never seen as Auto is treated as configured as Master.
+    /// </summary>
+    public bool SeenAsAuto { get; internal set; }
+
     /// <summary>True when the node runs on this machine.</summary>
     public bool IsLocal { get; internal set; }
 

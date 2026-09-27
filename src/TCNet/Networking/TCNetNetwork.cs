@@ -103,11 +103,12 @@ public static class TCNetMasterElection
 
     /// <summary>
     /// True if a node that became master by election should step back because <paramref name="other"/> is also master.
-    /// Decided by Node ID, then name (not uptime, whose estimates can disagree), so exactly one of two elected
-    /// masters steps back.
+    /// A master never seen as Auto (configured as Master) always wins. Between two elected masters the lower
+    /// Node ID, then name, stays (not uptime, whose estimates can disagree), so exactly one steps back.
     /// </summary>
     public static bool ShouldDemote(ushort selfNodeId, string selfName, TCNetRemoteNode other) =>
-        other.NodeType == NodeType.Master && IdentityBefore(other.NodeId, other.NodeName, selfNodeId, selfName);
+        other.NodeType == NodeType.Master
+        && (!other.SeenAsAuto || IdentityBefore(other.NodeId, other.NodeName, selfNodeId, selfName));
 
     /// <summary>Remote uptime advanced by the time since its last Opt-IN.</summary>
     private static long EstimatedUptime(TCNetRemoteNode n, DateTime now) =>

@@ -59,7 +59,7 @@ public static class TCNetOptionCatalog
         new("Protocol version", "Opt-IN/Status tables show minor 6, other tables show 1; this library sends 3.5 (the document version) and accepts any."),
         new("Metadata text", "Protocol < 3.5 uses UTF-8, ≥ 3.5 uses UTF-16LE in 256-byte fields (128 UTF-16 code units). The printed '64 characters' is left over from UTF-32. Chosen by the sender's header version."),
         new("Metadata size", "Fields end at byte 547; the stated size is 548. 548 bytes are sent."),
-        new("Cue Data offsets", "Loop OUT is 46–49 but cue 1 type is printed at 47, and the stated size (436) is shorter than the table (443). Default layout = printed offsets (an empty cue 1 is not written, so Loop OUT survives; on read the shared bytes are Loop OUT only if the rest of cue 1 is empty and Loop OUT > Loop IN > 0); CueTableLayout.AfterLoop moves the table to 50."),
+        new("Cue Data offsets", "Loop OUT is 46–49 but cue 1 type is printed at 47, and the stated size (436) is shorter than the table (443). Default layout = printed offsets (an empty cue 1 is not written, so Loop OUT survives; on read, with the rest of cue 1 empty, the shared bytes are cue 1 only if bytes 46 and 48 are zero and 47 holds a type); CueTableLayout.AfterLoop moves the table to 50."),
         new("Time packet", "LC Time is printed at 48 (should be 52) and LC Beat Marker at 94 (should be 95); the sequential offsets are used."),
         new("Mixer size", "Fields end at byte 269; the stated size is 270. 270 bytes are sent."),
         new("Chunk numbering", "Beat grid OFFSET = beat × 8 − packet × 2400 implies 0-based packet numbers. This library sends 0-based and reassembles either base by sorting."),

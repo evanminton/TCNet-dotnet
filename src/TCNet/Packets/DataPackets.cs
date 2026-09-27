@@ -292,11 +292,12 @@ public sealed class CueDataPacket : DataPacket
         {
             int o = CueTableOffset + i * CueStride;
             var c = Cues[i];
-            if (i == 0 && Layout == CueTableLayout.Specification && LoopIn != 0 && LoopOut > LoopIn
-                && !p.Slice(o + 3, CueStride - 3).ContainsAnyExcept((byte)0))
+            if (i == 0 && Layout == CueTableLayout.Specification && !p.Slice(o + 3, CueStride - 3).ContainsAnyExcept((byte)0)
+                && !(p[46] == 0 && p[48] == 0 && p[47] != 0))
             {
-                // Only bytes shared with Loop OUT are set and they form a valid loop (OUT after IN): they belong
-                // to Loop OUT and cue 1 is empty. Otherwise they are read as cue 1 (e.g. a hot cue near 0 ms).
+                // Only bytes shared with Loop OUT (47–49) are set. A written cue 1 leaves byte 48 at 0 and, with no
+                // loop, byte 46 too, with its type at 47 (a hot cue near 0 ms). Anything else is Loop OUT and cue 1
+                // is empty. (A Loop OUT under 65.5 s that is a multiple of 256 ms is read as a cue.)
                 c.Type = 0; c.InTime = 0; c.OutTime = 0; c.Color = default;
                 continue;
             }

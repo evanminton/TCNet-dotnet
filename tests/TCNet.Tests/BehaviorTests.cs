@@ -134,8 +134,12 @@ public class TimingTests
         Assert.True(TCNetMasterElection.ShouldPromote(101, 1, "N1", [Node(5, NodeType.Auto, 100)], now));
         Assert.Equal(1, TCNetMasterElection.ChooseMaster([Node(5, NodeType.Auto, 100), Node(1, NodeType.Auto, 101)], now)!.NodeId);
         // Two elected masters: exactly one steps back, whatever their uptimes.
-        Assert.True(TCNetMasterElection.ShouldDemote(5, "ME", Node(1, NodeType.Master, 10)));
-        Assert.False(TCNetMasterElection.ShouldDemote(1, "N1", Node(5, NodeType.Master, 999)));
+        var elected1 = Node(1, NodeType.Master, 10); elected1.SeenAsAuto = true;
+        var elected5 = Node(5, NodeType.Master, 999); elected5.SeenAsAuto = true;
+        Assert.True(TCNetMasterElection.ShouldDemote(5, "ME", elected1));
+        Assert.False(TCNetMasterElection.ShouldDemote(1, "N1", elected5));
+        // A master configured as such (never seen as Auto) always wins.
+        Assert.True(TCNetMasterElection.ShouldDemote(1, "N1", Node(5, NodeType.Master, 0)));
         // Undecided fallback: lowest Node ID among Auto nodes.
         Assert.True(TCNetMasterElection.ShouldPromoteByIdentity(1, "N1", [Node(5, NodeType.Auto, 999)]));
         Assert.False(TCNetMasterElection.ShouldPromoteByIdentity(5, "N5", [Node(1, NodeType.Auto, 0)]));

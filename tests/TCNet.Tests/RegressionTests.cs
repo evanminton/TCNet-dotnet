@@ -94,6 +94,19 @@ public class PacketRegressionTests
         Assert.False(back.Cues[0].IsEmpty);
     }
 
+    [Theory]
+    [InlineData(0u, 4000u)]
+    [InlineData(1000u, 60_000u)]
+    [InlineData(0u, 300_000u)]
+    public void CueData_LoopRoundTripsWithEmptyCue1(uint loopIn, uint loopOut)
+    {
+        var p = new CueDataPacket { LayerId = 1, LoopIn = loopIn, LoopOut = loopOut };
+        var back = (CueDataPacket)TCNetPacket.Parse(p.ToArray());
+        Assert.Equal(loopIn, back.LoopIn);
+        Assert.Equal(loopOut, back.LoopOut);
+        Assert.True(back.Cues[0].IsEmpty);
+    }
+
     [Fact]
     public void TextData_NonUtf8Payload_RoundTripsByteForByte()
     {
@@ -215,6 +228,19 @@ public class NodeRegressionTests
         Assert.True((await first).TimedOut);
         Assert.False((await second).TimedOut);
         master.RequestHandler = (rq, _) => playback.HandleRequest(rq);
+
+        // Infinite and very large timeouts wait instead of failing at once.
+        Assert.IsType<MetadataPacket>((await slave.RequestAsync(peer!, DataType.Metadata, 1, Timeout.InfiniteTimeSpan)).Packet);
+        Assert.IsType<MetadataPacket>((await slave.RequestAsync(peer!, DataType.Metadata, 1, TimeSpan.MaxValue)).Packet);
+
+        // A control call queued behind a slow one keeps its full timeout for its own round trip.
+        master.ControlHandler = (cp, _) => { Thread.Sleep(400); return playback.Apply(cp); };
+        var slow = slave.SendControlAsync(peer!, ControlCommand.SetLayerState(1, LayerState.Playing).ToString(), TimeSpan.FromSeconds(2));
+        await Task.Delay(50);
+        var queued = slave.SendControlAsync(peer!, ControlCommand.SetLayerState(2, LayerState.Playing).ToString(), TimeSpan.FromMilliseconds(600));
+        Assert.NotNull(await slow);
+        Assert.NotNull(await queued);
+        master.ControlHandler = (cp, _) => playback.Apply(cp);
 
         var acks = await Task.WhenAll(
             slave.SendControlAsync(peer!, ControlCommand.SetLayerState(1, LayerState.Playing)),

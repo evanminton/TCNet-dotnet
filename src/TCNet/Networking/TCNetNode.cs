@@ -243,6 +243,8 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
         _unicast = null;
         cts.Dispose();
         _cts = null;
+        _electionPending = false;
+        _electedMaster = false;
         _nodes.Clear();
         Assembler.Clear();
         foreach (var p in _pendingRequests.Values) p.TrySetCanceled();
@@ -262,6 +264,7 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
     {
         if (NodeType == type) return;
         _electedMaster = false;
+        _electionPending = false;
         NodeType = type;
         RoleChanged?.Invoke(this, type);
     }
@@ -442,6 +445,7 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
             var previousType = node.NodeType;
             node.NodeName = packet.NodeName;
             node.NodeType = packet.NodeType;
+            if (packet.NodeType == NodeType.Auto) node.SeenAsAuto = true;
             node.NodeOptions = packet.NodeOptions;
             node.ProtocolVersion = packet.ProtocolVersion;
             node.LastTimestamp = packet.Timestamp;
@@ -730,9 +734,14 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
         }
         else if (NodeType == NodeType.Master && _electedMaster)
         {
-            // Two nodes promoted at once: the one with the higher Node ID returns to Auto.
+            // Another master: a configured one always wins; of two elected ones, the higher Node ID steps back.
             if (nodes.Any(n => TCNetMasterElection.ShouldDemote(Settings.NodeId, TruncatedName, n)))
+            {
                 SetNodeType(NodeType.Auto);
+                // Keep an election open in case the other master leaves again.
+                _electionPending = true;
+                _electionPendingSince = DateTime.UtcNow;
+            }
         }
     }
 
@@ -976,15 +985,24 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
     /// the call waits for it to finish first (e.g. control paths, whose responses cannot be told apart).
     /// The waiter is only ever removed by the call that registered it. Each call keeps its own timeout and
     /// cancellation: if a shared round trip fails for its owner (cancelled, timed out, send error), a joiner
-    /// sends its own request with the time it has left.
+    /// sends its own request with the time it has left. The clock starts when the request is joined or
+    /// registered, not while a control call queues behind another; <see cref="Timeout.InfiniteTimeSpan"/> waits forever.
     /// </summary>
     private static async Task<T> RoundTripAsync<T>(ConcurrentDictionary<string, TaskCompletionSource<T>> pending, string key, bool joinExisting,
         Func<Task> send, TimeSpan timeout, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        DateTime? deadline = null;
         TimeSpan Remaining()
         {
-            var left = deadline - DateTime.UtcNow;
+            if (timeout == Timeout.InfiniteTimeSpan) return Timeout.InfiniteTimeSpan;
+            var now = DateTime.UtcNow;
+            if (deadline is null)
+            {
+                // Beyond Task.Delay's limit (~49.7 days), e.g. TimeSpan.MaxValue: wait forever.
+                if (timeout >= TimeSpan.FromDays(49)) return Timeout.InfiniteTimeSpan;
+                deadline = now + timeout;
+            }
+            var left = deadline.Value - now;
             return left > TimeSpan.Zero ? left : TimeSpan.Zero;
         }
 
@@ -1001,7 +1019,8 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
             try
             {
                 if (joinExisting) return await WithTimeout(existing.Task, Remaining(), ct, static () => { }).ConfigureAwait(false);
-                await existing.Task.WaitAsync(Remaining(), ct).ConfigureAwait(false);
+                // Control: queue behind the previous call (bounded by its own timeout) without spending ours.
+                await existing.Task.WaitAsync(ct).ConfigureAwait(false);
             }
             catch (Exception) when (existing.Task.IsCompleted && !ct.IsCancellationRequested)
             {
@@ -1009,6 +1028,7 @@ public sealed class TCNetNode : IAsyncDisposable, IDisposable
             }
         }
 
+        _ = Remaining(); // start the clock now that this call owns the round trip
         try
         {
             await send().ConfigureAwait(false);
