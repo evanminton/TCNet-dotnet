@@ -1,13 +1,11 @@
 # TCNet-dotnet — TCNet V3.5.1B for .NET 10
 
-A from-scratch implementation of the **TCNet Link Specification V3.5.1B (02/03/2022)** with a command-line utility and a .NET MAUI app. Every packet, field and option in the spec is modelled. Each option comes with its spec meaning, and every packet can describe itself field by field.
+A from-scratch .NET 10 class library for the **TCNet Link Specification V3.5.1B (02/03/2022)**. Every packet, field and option in the spec is modelled. Each option comes with its spec meaning, and every packet can describe itself field by field.
 
 ```
 TCNet.slnx
 ├─ src/TCNet               class library (net10.0, AOT/trim safe)
-├─ tests/TCNet.Tests       xUnit: byte offsets from the spec tables, round trips, reassembly, time sync, loopback nodes
-├─ tools/TCNet.Monitor     tcnet-monitor CLI (listen, nodes, request, sync, control, text, key, master, decode, layout, options, catalog)
-└─ samples/TCNet.Maui      MAUI app (Windows, Android; iOS / Mac Catalyst on macOS)
+└─ tests/TCNet.Tests       xUnit: byte offsets from the spec tables, round trips, reassembly, time sync, loopback nodes
 ```
 
 ## Build
@@ -15,30 +13,13 @@ TCNet.slnx
 ```powershell
 dotnet build TCNet.slnx -c Debug
 dotnet build TCNet.slnx -c Release
-dotnet test  tests/TCNet.Tests -c Release
+dotnet test  TCNet.slnx -c Release
+dotnet pack  src/TCNet -c Release -o artifacts   # TCNet.<version>.nupkg
 
-dotnet workload install maui                                # once, for the app
-dotnet build samples/TCNet.Maui -c Release -f net10.0-windows10.0.19041.0 -p:TCNetAppTfm=net10.0-windows10.0.19041.0
-dotnet run --project samples/TCNet.Maui -f net10.0-windows10.0.19041.0 -p:TCNetAppTfm=net10.0-windows10.0.19041.0
-
-./build.ps1 -c Both -App        # Debug + Release, tests, and the app for this OS
+./build.ps1 -c Both                              # Debug + Release with tests
 ```
 
-The `-p:TCNetAppTfm=` property builds only that platform, so the Android workload is not needed on Windows. Windows Firewall must allow UDP 60000–60002 and 65023–65535.
-
-## Standalone Windows install
-
-```
-make-installer.cmd                              # double-click; log in installer-log.txt
-./installer/build-installer.ps1 [-SkipTests] [-NoSetup] [-c Debug]
-```
-
-Output in `artifacts\installer\`, self-contained (no .NET or Windows App SDK needed on the target PC):
-
-- `TCNet-Monitor-Setup-<ver>-win-x64.exe`: installs per user (no admin) or for all users. Adds Start menu shortcuts for the app and the CLI, an optional desktop shortcut, optionally puts `tcnet-monitor` on PATH, adds firewall rules (all-users install only), and registers an uninstaller.
-- `TCNet-Monitor-<ver>-win-x64-portable.zip`: unzip anywhere and run `TCNet.Maui.exe`; the CLI is in `cli\`.
-
-Setup.exe needs Inno Setup 6; the script installs it with winget if it's missing.
+To receive TCNet on Windows, the firewall must allow UDP 60000–60002 and 65023–65535.
 
 ## Library
 
@@ -65,29 +46,6 @@ var ack    = await node.SendControlAsync(master, ControlCommand.SetLayerState(1,
 foreach (var f in meta!.Describe()) Console.WriteLine(f);   // [  29+256] Track Artist = … (UTF-16)
 ```
 
-## tcnet-monitor
-
-```
-tcnet-monitor listen --full                 every packet, every field, with meanings
-tcnet-monitor nodes --seconds 5             population list with status, layers, time sync
-tcnet-monitor request BRIDGE beatgrid 1     request any data type; waveforms drawn as text, artwork saved as JPEG
-tcnet-monitor sync BRIDGE 8
-tcnet-monitor control BRIDGE "layer/1/state=6;"
-tcnet-monitor master                        simulate a master (time stream, status, requests, control)
-tcnet-monitor decode 0100030554434E02…      decode any datagram
-tcnet-monitor layout metrics | options | catalog --markdown | interfaces
-```
-
-## MAUI app
-
-- **Live**: the 8 layers of a chosen node: name, state, time and remaining time, waveform with play head, timecode with SMPTE mode and state, beat marker, BPM, speed and pitch bend, artist and title, track ID, source, on-air fader.
-- **Nodes → node detail**: every Opt-IN/Status field with its meaning and per-layer data. You can request any data type, or all of them. Other actions: time sync (4 rounds), control paths (play, stop, resync), Text Data, Keyboard Data and artwork preview.
-- **Mixer**: every Mixer Data field, plus the master, crossfader and 6 channel strips.
-- **Packets**: live log (sent and received) with a filter. Tap a packet for every field and a hex dump.
-- **Send**: build any packet type, edit the hex, decode it and send it to a broadcast port, a node or an IP:port.
-- **Reference**: every packet layout, option table, application code and spec note, with search and a copy-as-Markdown button.
-- **Settings**: node name, ID, type, the 4 option flags, interface, ports and broadcast address. Also auto requests, time sync, master election and simulate-a-master.
-
 ## Spec notes honoured
 
 - Metadata strings are UTF-8 for protocol < 3.5 and UTF-16LE for ≥ 3.5 (256-byte fields), chosen from the sender's header version.
@@ -98,3 +56,5 @@ tcnet-monitor layout metrics | options | catalog --markdown | interfaces
 - Uptime rolls over at 12 h. Master election follows the Opt-OUT tip: highest uptime wins, uptimes within 2 s tie and go to the lower Node ID. An election still undecided after 3 Opt-IN rounds goes to the lowest Node ID, and when two elected masters meet, the higher Node ID steps back.
 
 TCNet is by Event Imagineering Group. This library is an independent implementation of the public specification.
+
+Licensed under the MIT License (see `LICENSE`).
