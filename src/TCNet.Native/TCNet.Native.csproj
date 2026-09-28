@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    TCNet as a native C library (NativeAOT): no .NET runtime needed on the target.
+      dotnet publish src/TCNet.Native -c Release -r win-x64 -p:NativeLib=Shared   → TCNetNative.dll + TCNetNative.lib (import)
+      dotnet publish src/TCNet.Native -c Release -r win-x64 -p:NativeLib=Static   → TCNetNative.lib (static)
+    The C API is include/tcnet.h. NativeAOT compiles for the OS it runs on (win-* on Windows, linux-* on Linux,
+    osx-* on macOS). build-native.cmd in _tcnet-installer builds both kinds, both configurations, and a C test.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>TCNetNative</AssemblyName>
+    <RootNamespace>TCNet.Native</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NativeLib Condition="'$(NativeLib)' == ''">Shared</NativeLib>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TCNet/TCNet.csproj" />
+    <InternalsVisibleTo Include="TCNet.Tests" />
+  </ItemGroup>
+
+  <!-- After the native link, record what a static-library consumer has to link as well (the NativeAOT runtime
+       libraries and Windows/system libraries). build-native.cmd copies them next to the static library. -->
+  <Target Name="TCNetWriteLinkInputs" AfterTargets="LinkNative" Condition="'$(NativeLib)' == 'Shared'">
+    <WriteLinesToFile File="$(NativeOutputPath)native-libs.txt" Lines="@(NativeLibrary)" Overwrite="true" />
+    <WriteLinesToFile File="$(NativeOutputPath)system-libs.txt" Lines="@(NativeSystemLibrary)" Overwrite="true" />
+    <WriteLinesToFile File="$(NativeOutputPath)linker-args.txt" Lines="@(LinkerArg)" Overwrite="true" />
+    <!-- WriteLinesToFile deletes the file when the list is empty, hence the Exists checks. -->
+    <Copy SourceFiles="$(NativeOutputPath)native-libs.txt" DestinationFolder="$(PublishDir)" Condition="Exists('$(NativeOutputPath)native-libs.txt')" />
+    <Copy SourceFiles="$(NativeOutputPath)system-libs.txt" DestinationFolder="$(PublishDir)" Condition="Exists('$(NativeOutputPath)system-libs.txt')" />
+    <Copy SourceFiles="$(NativeOutputPath)linker-args.txt" DestinationFolder="$(PublishDir)" Condition="Exists('$(NativeOutputPath)linker-args.txt')" />
+  </Target>
+</Project>

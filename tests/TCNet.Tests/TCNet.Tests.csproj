@@ -12,6 +12,7 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <ProjectReference Include="../../src/TCNet/TCNet.csproj" />
+    <ProjectReference Include="../../src/TCNet.Native/TCNet.Native.csproj" />
     <!-- Built (not referenced) so CliTests can run the tcnet utility; its path is passed as assembly metadata. -->
     <ProjectReference Include="../../tools/TCNet.Utility/TCNet.Utility.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/TCNet/TCNet.csproj" />
+    <Project Path="src/TCNet.Native/TCNet.Native.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TCNet.Tests/TCNet.Tests.csproj" />

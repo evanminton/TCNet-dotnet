@@ -7,6 +7,8 @@ every field has its offset, size, value and meaning.
 | Folder | What |
 |---|---|
 | `src/TCNet` | The library (`TCNet` package): packets, parser, chunk reassembly, clock/timecode, the node, text and reference data |
+| `src/TCNet.Native` | The same library as a native C library (NativeAOT, shared `.dll` or static `.lib`) with `include/tcnet.h` — see [NATIVE.md](src/TCNet.Native/NATIVE.md) |
+| `samples/native` | `tcnet_demo.c`: C program that tests the native library |
 | `tests/TCNet.Tests` | xUnit tests: every byte offset against the spec, round trips, reassembly, timing, node behaviour on loopback |
 | `tools/TCNet.Utility` | `tcnet` — monitor, requester, controller, master simulator and offline spec reference |
 | `app/TCNet.Maui` | TCNet Monitor — live layers, nodes, mixer, packet log, packet builder, master simulator, reference, settings |
@@ -34,6 +36,19 @@ dotnet build app/TCNet.Maui -c Release -p:TCNetAppTfm=net10.0-windows10.0.19041.
 ```
 
 `TCNetAppTfm` builds the app for one platform so the Android workload isn't needed.
+
+## Native library (C API)
+
+`src/TCNet.Native` compiles everything to a native library with no .NET runtime dependency, callable from C/C++ and
+anything with a C FFI. It can be shared or static:
+
+```powershell
+dotnet publish src/TCNet.Native -c Release -r win-x64 -p:NativeLib=Shared   # TCNetNative.dll + import .lib
+dotnet publish src/TCNet.Native -c Release -r win-x64 -p:NativeLib=Static   # TCNetNative.lib (static)
+```
+
+The API is in `src/TCNet.Native/include/tcnet.h`, and [NATIVE.md](src/TCNet.Native/NATIVE.md) covers linking.
+NativeAOT needs the MSVC build tools on Windows (clang on Linux, Xcode on macOS) and only builds for the OS it runs on.
 
 ## Library
 
