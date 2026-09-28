@@ -203,7 +203,6 @@ public sealed class TCNetNode : IAsyncDisposable
             foreach (var t in _requests.Values) t.Tcs.TrySetCanceled();
             foreach (var t in _syncs.Values) t.Tcs.TrySetCanceled();
             foreach (var t in _controls.Values) t.Tcs.TrySetCanceled();
-            _controlQueues.Clear();
             _requests.Clear();
             _syncs.Clear();
             _controls.Clear();
