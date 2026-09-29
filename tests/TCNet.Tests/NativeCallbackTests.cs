@@ -126,8 +126,8 @@ public class NativeCallbackTests
         });
         _node.Start();
         _node.SetCallback(1 << 4, RequestingPointer(), 0);
-        var ghost = new OptInPacket { NodeId = 8, NodeName = "GHOST", ListenerPort = 1 }.ToArray();
-        var inject = Task.Run(() => _node.Inject(ghost, "127.0.0.1", 1));
+        var ghost = new OptInPacket { NodeId = 8, NodeName = "GHOST", ListenerPort = 65535 }.ToArray();
+        var inject = Task.Run(() => _node.Inject(ghost, "127.0.0.1", 65535));
         await Until(() => Volatile.Read(ref _calls) > 0);
 
         // What tcnet_node_destroy does: stop (ending the request), then remove the callback.

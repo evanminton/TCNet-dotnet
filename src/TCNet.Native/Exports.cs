@@ -276,7 +276,13 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly(EntryPoint = "tcnet_node_start", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeStart(void* handle)
     {
-        try { NodeOf(handle).Start(); return 0; }
+        try
+        {
+            // Stop (on another thread) waits for the receive threads, one of which may be running this callback.
+            if (NativeNode.InCallback) throw new InvalidOperationException("tcnet_node_start can't be called from inside an event callback.");
+            NodeOf(handle).Start();
+            return 0;
+        }
         catch (Exception ex) { return Fail(ex); }
     }
 

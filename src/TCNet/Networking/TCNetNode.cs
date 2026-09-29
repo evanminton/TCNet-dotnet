@@ -68,7 +68,7 @@ public sealed class TCNetNode : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Pending<RequestResult>> _requests = new();
     private readonly ConcurrentDictionary<string, Pending<TimeSyncResult>> _syncs = new();
     private readonly ConcurrentDictionary<string, Pending<ErrorNotificationPacket>> _controls = new();
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _controlQueues = new();
+    private readonly Dictionary<string, ControlQueue> _controlQueues = new();
     private readonly SemaphoreSlim _life = new(1, 1);
     private readonly byte[] _seq = new byte[256];
     private readonly List<Socket> _shared = [];
@@ -82,9 +82,15 @@ public sealed class TCNetNode : IAsyncDisposable
     private readonly object _streamGate = new();
     /// <summary>Set inside a time stream (and the handlers it raises), which must not wait for a stream to end.</summary>
     private readonly AsyncLocal<CancellationTokenSource?> _inStream = new();
+    /// <summary>Guards <see cref="NodeType"/> and the election state; RoleChanged is raised after releasing it.</summary>
+    private readonly object _roleGate = new();
+    /// <summary>Serialises RoleChanged so a change overtaken by a newer one is never reported after it.</summary>
+    private readonly object _roleEventGate = new();
+    private int _roleVersion;
     private int _electionRounds = -1;
     private bool _elected;
     private DateTime _electedAt;
+    private int _nodesFullWarned;
     private long _received, _sent;
 
     public TCNetNode(NodeSettings? settings = null)
@@ -141,6 +147,8 @@ public sealed class TCNetNode : IAsyncDisposable
         try
         {
             if (_cts is not null) return;
+            ValidateSettings();
+            _nodesFullWarned = 0;
             _local = TCNetNetwork.LocalAddresses();
             BroadcastAddress = ResolveBroadcast();
             _socket = BindListener();
@@ -172,10 +180,22 @@ public sealed class TCNetNode : IAsyncDisposable
         finally { _life.Release(); }
     }
 
+    private void ValidateSettings()
+    {
+        static bool Timer(TimeSpan t) => t > TimeSpan.Zero && t.TotalMilliseconds <= uint.MaxValue - 1;
+        if (!Timer(Settings.OptInInterval))
+            throw new ArgumentOutOfRangeException(nameof(NodeSettings.OptInInterval), Settings.OptInInterval, "Must be positive.");
+        if (Settings.NodeTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(NodeSettings.NodeTimeout), Settings.NodeTimeout, "Must be positive.");
+        if (Settings.MaxNodes < 1)
+            throw new ArgumentOutOfRangeException(nameof(NodeSettings.MaxNodes), Settings.MaxNodes, "Must be at least 1.");
+    }
+
     /// <summary>Sends Opt-OUT (broadcast and unicast) and closes. Safe to call more than once or concurrently.</summary>
     public async Task StopAsync()
     {
         await _life.WaitAsync().ConfigureAwait(false);
+        int roleVersion = 0;
         try
         {
             if (_cts is null) return;
@@ -208,12 +228,17 @@ public sealed class TCNetNode : IAsyncDisposable
             _requests.Clear();
             _syncs.Clear();
             _controls.Clear();
-            // An elected master was only master for this run: go back to Auto so the next run elects again.
-            if (_elected) ChangeRole(NodeType.Auto);
-            _electionRounds = -1;
-            _elected = false;
+            lock (_roleGate)
+            {
+                // An elected master was only master for this run: go back to Auto so the next run elects again.
+                if (_elected) roleVersion = ChangeRoleLocked(NodeType.Auto);
+                _electionRounds = -1;
+                _elected = false;
+            }
         }
         finally { _life.Release(); }
+        // Raised after releasing the lifecycle lock, so a handler may start the node again.
+        RaiseRole(NodeType.Auto, roleVersion);
     }
 
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
@@ -221,16 +246,33 @@ public sealed class TCNetNode : IAsyncDisposable
     /// <summary>Changes the advertised role; clears any election in progress.</summary>
     public void SetNodeType(NodeType type)
     {
-        _electionRounds = -1;
-        _elected = false;
-        ChangeRole(type);
+        int version;
+        lock (_roleGate)
+        {
+            _electionRounds = -1;
+            _elected = false;
+            version = ChangeRoleLocked(type);
+        }
+        RaiseRole(type, version);
     }
 
-    private void ChangeRole(NodeType type)
+    /// <summary>Sets the role (hold <see cref="_roleGate"/>); returns the change's version for <see cref="RaiseRole"/>, 0 if unchanged.</summary>
+    private int ChangeRoleLocked(NodeType type)
     {
-        if (NodeType == type) return;
+        if (NodeType == type) return 0;
         NodeType = type;
-        Raise(RoleChanged, type);
+        return ++_roleVersion;
+    }
+
+    /// <summary>Raises RoleChanged for a change, unless a newer change has happened since (its own event reports it).</summary>
+    private void RaiseRole(NodeType type, int version)
+    {
+        if (version == 0) return;
+        lock (_roleEventGate)
+        {
+            lock (_roleGate) if (_roleVersion != version) return;
+            Raise(RoleChanged, type);
+        }
     }
 
     // ─────────────── sockets ───────────────
@@ -314,6 +356,19 @@ public sealed class TCNetNode : IAsyncDisposable
 
     private string OwnName => Settings.NodeName.Length > 8 ? Settings.NodeName[..8] : Settings.NodeName;
 
+    /// <summary>Our name as other nodes read it (characters above U+00FF become '?', trailing spaces are trimmed).</summary>
+    private string OwnWireName
+    {
+        get
+        {
+            Span<byte> wire = stackalloc byte[TCNetConstants.NodeNameLength];
+            Wire.PutAscii(wire, 0, wire.Length, OwnName);
+            return Wire.Ascii(wire, 0, wire.Length);
+        }
+    }
+
+    private static bool IsListenerPort(int port) => port is >= TCNetConstants.UnicastPortMin and <= TCNetConstants.UnicastPortMax;
+
     private void Handle(ReadOnlySpan<byte> data, IPEndPoint from, int port)
     {
         if (!TCNetParser.TryParse(data, out var packet, out var error))
@@ -322,7 +377,7 @@ public sealed class TCNetNode : IAsyncDisposable
             return;
         }
 
-        bool own = packet!.NodeId == Settings.NodeId && packet.NodeName == OwnName && _local.Contains(from.Address);
+        bool own = packet!.NodeId == Settings.NodeId && packet.NodeName == OwnWireName && _local.Contains(from.Address);
         if (own && !Settings.ReceiveOwnPackets) return;
         Interlocked.Increment(ref _received);
 
@@ -338,8 +393,9 @@ public sealed class TCNetNode : IAsyncDisposable
             case ErrorNotificationPacket en: OnNotification(en, node); break;
             case StatusPacket st: OnStatus(st, node); break;
             case TimePacket tp:
-                node.Time = tp;
+                // TimeReceived first: whoever sees Time set also sees when it arrived.
                 node.TimeReceived = DateTime.UtcNow;
+                node.Time = tp;
                 break;
             case DataPacket dp: OnData(dp, from, node); break;
             case ApplicationDataPacket ap:
@@ -352,7 +408,7 @@ public sealed class TCNetNode : IAsyncDisposable
     {
         string key = RemoteNode.KeyOf(from.Address, p.NodeId);
         RemoteNode? node;
-        bool created = false;
+        bool created = false, full = false;
 
         lock (_nodesGate)
         {
@@ -362,11 +418,22 @@ public sealed class TCNetNode : IAsyncDisposable
             }
             else if (!_nodes.TryGetValue(key, out node))
             {
-                node = new RemoteNode(from.Address, p.NodeId, _local.Contains(from.Address));
-                if (from.Port is >= TCNetConstants.UnicastPortMin and <= TCNetConstants.UnicastPortMax) node.ListenerPort = from.Port;
-                _nodes[key] = node;
-                created = true;
+                if (_nodes.Count >= Settings.MaxNodes) full = true;
+                else
+                {
+                    node = new RemoteNode(from.Address, p.NodeId, _local.Contains(from.Address));
+                    if (IsListenerPort(from.Port)) node.ListenerPort = from.Port;
+                    _nodes[key] = node;
+                    created = true;
+                }
             }
+        }
+
+        if (node is null)
+        {
+            if (full && Interlocked.Exchange(ref _nodesFullWarned, 1) == 0)
+                Warn($"The population list is full ({Settings.MaxNodes} nodes); new nodes are ignored until some leave.");
+            return null;
         }
 
         if (p is OptOutPacket)
@@ -392,7 +459,7 @@ public sealed class TCNetNode : IAsyncDisposable
         switch (p)
         {
             case OptInPacket oi:
-                if (oi.ListenerPort != 0) node.ListenerPort = oi.ListenerPort;
+                if (IsListenerPort(oi.ListenerPort)) node.ListenerPort = oi.ListenerPort;
                 node.NodeCount = oi.NodeCount;
                 node.Uptime = oi.Uptime;
                 node.VendorName = oi.VendorName;
@@ -402,10 +469,10 @@ public sealed class TCNetNode : IAsyncDisposable
                 changed = true;
                 break;
             case StatusPacket st:
-                if (st.ListenerPort != 0) node.ListenerPort = st.ListenerPort;
+                if (IsListenerPort(st.ListenerPort)) node.ListenerPort = st.ListenerPort;
                 node.NodeCount = st.NodeCount;
                 break;
-            case TimeSyncPacket ts when ts.ListenerPort != 0:
+            case TimeSyncPacket ts when IsListenerPort(ts.ListenerPort):
                 node.ListenerPort = ts.ListenerPort;
                 break;
         }
@@ -413,10 +480,18 @@ public sealed class TCNetNode : IAsyncDisposable
         if (created) Raise(NodeDiscovered, new NodeEventArgs(node));
         else if (changed) Raise(NodeChanged, new NodeEventArgs(node));
 
-        if (node.NodeType == NodeType.Master && NodeType == NodeType.Master && _elected && ShouldYieldTo(node))
+        if (node.NodeType == NodeType.Master)
         {
-            _elected = false;
-            ChangeRole(NodeType.Auto);
+            int version = 0;
+            lock (_roleGate)
+            {
+                if (NodeType == NodeType.Master && _elected && ShouldYieldTo(node))
+                {
+                    _elected = false;
+                    version = ChangeRoleLocked(NodeType.Auto);
+                }
+            }
+            RaiseRole(NodeType.Auto, version);
         }
         return node;
     }
@@ -626,36 +701,43 @@ public sealed class TCNetNode : IAsyncDisposable
             gone = _nodes.Values.Where(n => n.LastSeen < cutoff).ToList();
             foreach (var n in gone) _nodes.Remove(n.Key);
         }
+        if (gone.Count > 0) Volatile.Write(ref _nodesFullWarned, 0);
         foreach (var n in gone) Raise(NodeLost, new NodeEventArgs(n, "timeout"));
         if (gone.Any(n => n.NodeType == NodeType.Master)) BeginElection();
     }
 
     private void BeginElection()
     {
-        if (Settings.AutoMasterElection && NodeType == NodeType.Auto && _electionRounds < 0) _electionRounds = 0;
+        lock (_roleGate)
+            if (Settings.AutoMasterElection && NodeType == NodeType.Auto && _electionRounds < 0) _electionRounds = 0;
         ElectionTick();
     }
 
     private void ElectionTick()
     {
-        if (_electionRounds < 0) return;
-        var nodes = Nodes;
-        if (!Settings.AutoMasterElection || NodeType != NodeType.Auto || nodes.Any(n => n.NodeType == NodeType.Master))
+        int version;
+        lock (_roleGate)
         {
+            if (_electionRounds < 0) return;
+            var nodes = Nodes;
+            if (!Settings.AutoMasterElection || NodeType != NodeType.Auto || nodes.Any(n => n.NodeType == NodeType.Master))
+            {
+                _electionRounds = -1;
+                return;
+            }
+            _electionRounds++;
+            var others = nodes.Where(n => n.NodeType == NodeType.Auto).ToList();
+            // After 3 undecided rounds (uptime estimates can disagree near the tie window) fall back to identity only.
+            bool win = _electionRounds > 3
+                ? others.All(o => MasterElection.IdentityBefore(Self(o.Address), MasterElection.Of(o)))
+                : others.All(o => MasterElection.Beats(Self(o.Address), MasterElection.Of(o)));
+            if (!win) return;
             _electionRounds = -1;
-            return;
+            _elected = true;
+            _electedAt = DateTime.UtcNow;
+            version = ChangeRoleLocked(NodeType.Master);
         }
-        _electionRounds++;
-        var others = nodes.Where(n => n.NodeType == NodeType.Auto).ToList();
-        // After 3 undecided rounds (uptime estimates can disagree near the tie window) fall back to identity only.
-        bool win = _electionRounds > 3
-            ? others.All(o => MasterElection.IdentityBefore(Self(o.Address), MasterElection.Of(o)))
-            : others.All(o => MasterElection.Beats(Self(o.Address), MasterElection.Of(o)));
-        if (!win) return;
-        _electionRounds = -1;
-        _elected = true;
-        _electedAt = DateTime.UtcNow;
-        ChangeRole(NodeType.Master);
+        RaiseRole(NodeType.Master, version);
     }
 
     // ─────────────── send ───────────────
@@ -715,9 +797,27 @@ public sealed class TCNetNode : IAsyncDisposable
     {
         var s = _socket ?? throw new InvalidOperationException("The node is not running.");
         if (stamp) Stamp(packet);
-        await s.SendToAsync(packet.ToArray(), SocketFlags.None, to, ct).ConfigureAwait(false);
+        var bytes = packet.ToArray();
+        await s.SendToAsync(bytes, SocketFlags.None, to, ct).ConfigureAwait(false);
         Interlocked.Increment(ref _sent);
-        Raise(PacketSent, new PacketEventArgs(packet, to, to.Port, true, null));
+        // A copy of what went out: callers (and Opt-IN, Status, Opt-OUT) send one object several times, re-stamped each time.
+        if (PacketSent is not null) Raise(PacketSent, new PacketEventArgs(Snapshot(packet, bytes), to, to.Port, true, null));
+    }
+
+    /// <summary>A new packet decoded from <paramref name="bytes"/>, with the settings decoding depends on copied over.</summary>
+    private static TCNetPacket Snapshot(TCNetPacket packet, byte[] bytes)
+    {
+        var copy = TCNetParser.Create(packet.MessageType, packet is DataPacket d ? d.DataType : 0);
+        if (copy is CueDataPacket cue && packet is CueDataPacket original) cue.Layout = original.Layout;
+        if (copy is MetadataPacket md && packet is MetadataPacket mo) md.Encoding = mo.Encoding;
+        if (copy.GetType() != packet.GetType()) return packet;
+        try
+        {
+            copy.DecodeHeader(bytes);
+            copy.Decode(bytes, bytes.Length);
+            return copy;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IndexOutOfRangeException) { return packet; }
     }
 
     public Task SendAsync(TCNetPacket packet, RemoteNode node, CancellationToken ct = default) =>
@@ -764,11 +864,15 @@ public sealed class TCNetNode : IAsyncDisposable
 
     public bool IsStreaming => _stream is { IsCompleted: false };
 
-    /// <summary>Publishes a Time packet every <paramref name="interval"/> (spec: 1–40 ms).</summary>
+    /// <summary>Publishes a Time packet every <paramref name="interval"/> (spec: 1–40 ms) until stopped or the node stops.</summary>
+    /// <exception cref="InvalidOperationException">The node is not running.</exception>
     public void StartTimeStream(Func<TimePacket> source, TimeSpan interval)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
-        var cts = new CancellationTokenSource();
+        // Tied to this run: stopping the node (even one stopping right now) ends the stream.
+        var life = LifeToken();
+        if (life.IsCancellationRequested) throw new InvalidOperationException("The node is not running.");
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(life);
         CancellationTokenSource? previousCts;
         lock (_streamGate)
         {
@@ -986,15 +1090,36 @@ public sealed class TCNetNode : IAsyncDisposable
     /// </summary>
     public async Task<ErrorNotificationPacket?> SendControlAsync(RemoteNode node, string controlPath, TimeSpan? timeout = null, CancellationToken ct = default)
     {
-        var queue = _controlQueues.GetOrAdd(node.Key, _ => new SemaphoreSlim(1, 1));
-        await queue.WaitAsync(ct).ConfigureAwait(false);
+        ControlQueue queue;
+        lock (_controlQueues)
+        {
+            if (!_controlQueues.TryGetValue(node.Key, out queue!)) _controlQueues[node.Key] = queue = new ControlQueue();
+            queue.Users++;
+        }
         try
         {
-            var (ok, r) = await RoundTrip(_controls, node.Key,
-                () => SendAsync(new ControlPacket { Text = controlPath }, node, ct), timeout, ct).ConfigureAwait(false);
-            return ok ? r : null;
+            await queue.Gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var (ok, r) = await RoundTrip(_controls, node.Key,
+                    () => SendAsync(new ControlPacket { Text = controlPath }, node, ct), timeout, ct).ConfigureAwait(false);
+                return ok ? r : null;
+            }
+            finally { queue.Gate.Release(); }
         }
-        finally { queue.Release(); }
+        finally
+        {
+            // A queue lives only while someone holds or waits for it, so a node's controls always share one.
+            lock (_controlQueues)
+                if (--queue.Users == 0) _controlQueues.Remove(node.Key);
+        }
+    }
+
+    /// <summary>Controls to one node, one at a time; <see cref="Users"/> counts the callers holding or waiting (guarded by the dictionary).</summary>
+    private sealed class ControlQueue
+    {
+        public readonly SemaphoreSlim Gate = new(1, 1);
+        public int Users;
     }
 
     public Task<ErrorNotificationPacket?> SendControlAsync(RemoteNode node, params ControlCommand[] commands) =>

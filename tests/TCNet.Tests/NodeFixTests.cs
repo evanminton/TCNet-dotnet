@@ -47,7 +47,7 @@ public class NodeFixTests
         await node.StartAsync();
         int requests = 0;
         node.PacketSent += (_, e) => { if (e.Packet is RequestPacket) Interlocked.Increment(ref requests); };
-        node.Inject(new OptInPacket { NodeId = 5, NodeName = "GHOST", ListenerPort = 1 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 1));
+        node.Inject(new OptInPacket { NodeId = 5, NodeName = "GHOST", ListenerPort = 65535 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 65535));
         var ghost = node.FindNode("GHOST")!;
 
         using var cts = new CancellationTokenSource(100);
@@ -178,7 +178,7 @@ public class NodeFixTests
     {
         await using var node = new TCNetNode(Loop(302, "ENDLESS", NodeType.Slave));
         await node.StartAsync();
-        node.Inject(new OptInPacket { NodeId = 6, NodeName = "GHOST", ListenerPort = 1 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 1));
+        node.Inject(new OptInPacket { NodeId = 6, NodeName = "GHOST", ListenerPort = 65535 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 65535));
         var ghost = node.FindNode("GHOST")!;
         var request = node.RequestAsync(ghost, DataType.Metrics, 1, Timeout.InfiniteTimeSpan);
         var sync = node.TimeSyncAsync(ghost, 1, Timeout.InfiniteTimeSpan);
@@ -203,7 +203,7 @@ public class NodeFixTests
             catch (OperationCanceledException) { }
         };
         var inject = Task.Run(() =>
-            node.Inject(new OptInPacket { NodeId = 7, NodeName = "GHOST", ListenerPort = 1 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 1)));
+            node.Inject(new OptInPacket { NodeId = 7, NodeName = "GHOST", ListenerPort = 65535 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 65535)));
         await blocked.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         await node.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));

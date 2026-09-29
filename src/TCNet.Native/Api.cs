@@ -115,6 +115,7 @@ internal static class Api
                 case "listenonbroadcastports": s.ListenOnBroadcastPorts = v.GetBoolean(); break;
                 case "optinintervalms": s.OptInInterval = Ms(v); break;
                 case "nodetimeoutms": s.NodeTimeout = Ms(v); break;
+                case "maxnodes": s.MaxNodes = v.GetInt32(); break;
                 case "unicastoptin": s.UnicastOptIn = v.GetBoolean(); break;
                 case "sendstatus": s.SendStatus = v.ValueKind == JsonValueKind.Null ? null : v.GetBoolean(); break;
                 case "answertimesync": s.AnswerTimeSync = v.GetBoolean(); break;
