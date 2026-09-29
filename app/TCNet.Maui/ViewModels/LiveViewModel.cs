@@ -144,7 +144,8 @@ public sealed class LiveViewModel : PollingViewModel
         {
             null => _app.IsRunning ? "Waiting for a node…" : "Stopped – start the node in Settings",
             { Time: null } => $"{node.NodeName}: no Time packets yet",
-            _ => $"{node.NodeName} · general SMPTE {TCNetText.Describe(node.Time.SmpteMode)} · last Time packet {(DateTime.UtcNow - node.TimeReceived!.Value).TotalMilliseconds:0} ms ago",
+            { Time: { } time, TimeReceived: { } at } => $"{node.NodeName} · general SMPTE {TCNetText.Describe(time.SmpteMode)} · last Time packet {(DateTime.UtcNow - at).TotalMilliseconds:0} ms ago",
+            _ => $"{node.NodeName}: no Time packets yet",
         };
         foreach (var card in Layers)
         {

@@ -313,6 +313,7 @@ internal static class Json
         w.WriteBoolean("listenOnBroadcastPorts", s.ListenOnBroadcastPorts);
         w.WriteNumber("optInIntervalMs", s.OptInInterval.TotalMilliseconds);
         w.WriteNumber("nodeTimeoutMs", s.NodeTimeout.TotalMilliseconds);
+        w.WriteNumber("maxNodes", s.MaxNodes);
         w.WriteBoolean("unicastOptIn", s.UnicastOptIn);
         if (s.SendStatus is { } send) w.WriteBoolean("sendStatus", send);
         else w.WriteNull("sendStatus");

@@ -312,7 +312,7 @@ public class NodeTests
     {
         await using var slave = new TCNetNode(Loop(210, "LONELY", NodeType.Slave));
         await slave.StartAsync();
-        slave.Inject(new OptInPacket { NodeId = 5, NodeName = "GHOST", ListenerPort = 1 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 1));
+        slave.Inject(new OptInPacket { NodeId = 5, NodeName = "GHOST", ListenerPort = 65535 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 65535));
         var ghost = slave.FindNode("GHOST")!;
         var r = await slave.RequestAsync(ghost, DataType.Metrics, 1, TimeSpan.FromMilliseconds(100));
         Assert.True(r.TimedOut);

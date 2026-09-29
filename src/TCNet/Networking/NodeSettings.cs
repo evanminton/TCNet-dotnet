@@ -37,6 +37,9 @@ public sealed class NodeSettings
 
     public TimeSpan OptInInterval { get; set; } = TCNetConstants.OptInInterval;
 
+    /// <summary>Largest population list; datagrams from further new nodes are ignored until some leave.</summary>
+    public int MaxNodes { get; set; } = 1024;
+
     /// <summary>Nodes silent this long are removed from the population list.</summary>
     public TimeSpan NodeTimeout { get; set; } = TimeSpan.FromSeconds(5);
 

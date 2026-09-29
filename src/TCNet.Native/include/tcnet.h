@@ -14,8 +14,8 @@
  *   - char* results: NULL on failure, with tcnet_last_error().
  *   - JSON is compact unless tcnet_set_json_indented(1). Every value comes with its meaning ("...Text" fields);
  *     packets carry "fields": [{offset, size, name, value, meaning}] in wire order.
- *   - Node calls block until done (start, stop, requests, time sync, control). tcnet_node_stop and
- *     tcnet_node_destroy fail (see tcnet_last_error) when called from inside an event callback.
+ *   - Node calls block until done (start, stop, requests, time sync, control). tcnet_node_start, tcnet_node_stop
+ *     and tcnet_node_destroy fail (see tcnet_last_error) when called from inside an event callback.
  */
 #ifndef TCNET_H
 #define TCNET_H
@@ -150,7 +150,7 @@ typedef struct tcnet_node tcnet_node;
  * settings_json: NULL or {} for defaults, or any of
  *   nodeId, nodeName (≤ 8), nodeType ("Master"/2), nodeOptions, vendorName, deviceName, deviceMajor, deviceMinor,
  *   deviceBug, versionMajor, versionMinor, listenerPort (0 = first free from 65023), localAddress, broadcastAddress,
- *   listenOnBroadcastPorts, optInIntervalMs, nodeTimeoutMs, unicastOptIn, sendStatus (null = when master),
+ *   listenOnBroadcastPorts, optInIntervalMs, nodeTimeoutMs, maxNodes, unicastOptIn, sendStatus (null = when master),
  *   answerTimeSync, autoTimeSync, timeSyncIntervalMs, autoRequestMetadata, autoRequestMetrics,
  *   autoMasterElection, receiveOwnPackets, requestTimeoutMs (-1 = forever).
  * tcnet_node_info_json returns them under "settings" (next to live state such as "running" and "sharedPorts");
@@ -193,7 +193,8 @@ TCNET_API char* TCNET_CALL tcnet_node_find_json(tcnet_node* node, const char* qu
 TCNET_API int   TCNET_CALL tcnet_node_get_time(tcnet_node* node, const char* query, tcnet_time* out);
 TCNET_API char* TCNET_CALL tcnet_node_time_json(tcnet_node* node, const char* query);
 
-/* Sending time (as master): once, or streamed every interval_ms (spec: 1-40 ms) from the last set_stream_time. */
+/* Sending time (as master): once, or streamed every interval_ms (spec: 1-40 ms) from the last set_stream_time.
+ * The stream needs a running node (-1 otherwise) and ends when the node stops. */
 TCNET_API int TCNET_CALL tcnet_node_publish_time(tcnet_node* node, const tcnet_time* time);
 TCNET_API int TCNET_CALL tcnet_node_set_stream_time(tcnet_node* node, const tcnet_time* time);
 TCNET_API int TCNET_CALL tcnet_node_start_time_stream(tcnet_node* node, int interval_ms);
