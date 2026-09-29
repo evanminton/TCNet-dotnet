@@ -145,6 +145,114 @@ public class NodeFixTests
     }
 
     [Fact]
+    public async Task ElectedMaster_IsAutoAgainAfterRestart()
+    {
+        var settings = Loop(260, "AUTO", NodeType.Auto);
+        settings.AutoMasterElection = true;
+        await using var node = new TCNetNode(settings);
+        await node.StartAsync();
+        var boss = new IPEndPoint(IPAddress.Parse("10.9.9.9"), 65023);
+        node.Inject(new OptInPacket { NodeId = 1, NodeName = "BOSS", NodeType = NodeType.Master }.ToArray(), boss);
+        node.Inject(new OptOutPacket { NodeId = 1, NodeName = "BOSS", NodeType = NodeType.Master }.ToArray(), boss);
+        Assert.Equal(NodeType.Master, node.NodeType);
+
+        await node.StopAsync();
+        Assert.Equal(NodeType.Auto, node.NodeType);
+        await node.StartAsync();
+        // The master is back: a node still advertising Master would compete with it, one that is Auto simply follows.
+        node.Inject(new OptInPacket { NodeId = 1, NodeName = "BOSS", NodeType = NodeType.Master }.ToArray(), boss);
+        Assert.Equal(NodeType.Auto, node.NodeType);
+    }
+
+    [Fact]
+    public async Task ConfiguredMaster_StaysMasterAfterRestart()
+    {
+        await using var node = new TCNetNode(Loop(261, "BOSS", NodeType.Master));
+        await node.StartAsync();
+        await node.StopAsync();
+        Assert.Equal(NodeType.Master, node.NodeType);
+    }
+
+    [Fact]
+    public async Task EndlessRequest_EndsWhenTheNodeStops()
+    {
+        await using var node = new TCNetNode(Loop(302, "ENDLESS", NodeType.Slave));
+        await node.StartAsync();
+        node.Inject(new OptInPacket { NodeId = 6, NodeName = "GHOST", ListenerPort = 1 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 1));
+        var ghost = node.FindNode("GHOST")!;
+        var request = node.RequestAsync(ghost, DataType.Metrics, 1, Timeout.InfiniteTimeSpan);
+        var sync = node.TimeSyncAsync(ghost, 1, Timeout.InfiniteTimeSpan);
+        await Task.Delay(50);
+
+        await node.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request.WaitAsync(TimeSpan.FromSeconds(10)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sync.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task EndlessRequestInsideAHandler_DoesNotHangStop()
+    {
+        await using var node = new TCNetNode(Loop(303, "HANDLER", NodeType.Slave));
+        await node.StartAsync();
+        var blocked = new TaskCompletionSource();
+        node.NodeDiscovered += (_, e) =>
+        {
+            blocked.TrySetResult();
+            // Blocks the thread handling the datagram, as a blocking C call from a callback does.
+            try { node.RequestAsync(e.Node, DataType.Metrics, 1, Timeout.InfiniteTimeSpan).GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { }
+        };
+        var inject = Task.Run(() =>
+            node.Inject(new OptInPacket { NodeId = 7, NodeName = "GHOST", ListenerPort = 1 }.ToArray(), new IPEndPoint(IPAddress.Loopback, 1)));
+        await blocked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await node.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await inject.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task TimeStream_HandlerCanStopTheStream()
+    {
+        await using var node = new TCNetNode(Loop(332, "STREAM", NodeType.Master));
+        await node.StartAsync();
+        var stopped = new TaskCompletionSource();
+        node.PacketSent += (_, e) =>
+        {
+            if (e.Packet is not TimePacket || stopped.Task.IsCompleted) return;
+            node.StopTimeStreamAsync().GetAwaiter().GetResult();   // on the stream's own thread
+            stopped.TrySetResult();
+        };
+        node.StartTimeStream(() => new TimePacket(), TimeSpan.FromMilliseconds(5));
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Until(() => node.IsStreaming ? null : "");
+        await node.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task TimeStream_HandlerCanRestartTheStream()
+    {
+        await using var node = new TCNetNode(Loop(333, "STREAM", NodeType.Master));
+        await node.StartAsync();
+        int restarts = 0, sent = 0;
+        node.PacketSent += (_, e) =>
+        {
+            if (e.Packet is not TimePacket) return;
+            int n = Interlocked.Increment(ref sent);
+            if (n <= 3)
+            {
+                node.StartTimeStream(() => new TimePacket(), TimeSpan.FromMilliseconds(5));   // on the stream's own thread
+                Interlocked.Increment(ref restarts);
+            }
+        };
+        node.StartTimeStream(() => new TimePacket(), TimeSpan.FromMilliseconds(5));
+        await Until(() => Volatile.Read(ref sent) > 10 ? "" : null);
+        Assert.Equal(3, Volatile.Read(ref restarts));
+        Assert.True(node.IsStreaming);
+        await node.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(node.IsStreaming);
+    }
+
+    [Fact]
     public async Task Playback_LoadIsNotLostToAdvance()
     {
         var pb = new Playback();

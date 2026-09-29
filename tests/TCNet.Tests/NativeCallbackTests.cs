@@ -50,9 +50,19 @@ public class NativeCallbackTests
         Interlocked.Increment(ref _calls);
     }
 
+    /// <summary>Makes a request that never times out, like a C callback calling tcnet_node_request_json(..., -1).</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static unsafe void RequestingCallback(nint user, int kind, byte* json)
+    {
+        Interlocked.Increment(ref _calls);
+        try { _node!.Request("GHOST", 2 /* metrics */, 1, -1); }
+        catch (Exception) { Interlocked.Exchange(ref _freed, 1); }
+    }
+
     private static unsafe nint SlowPointer() => (nint)(delegate* unmanaged[Cdecl]<nint, int, byte*, void>)&SlowCallback;
     private static unsafe nint CountingPointer() => (nint)(delegate* unmanaged[Cdecl]<nint, int, byte*, void>)&CountingCallback;
     private static unsafe nint ReplacingPointer() => (nint)(delegate* unmanaged[Cdecl]<nint, int, byte*, void>)&ReplacingCallback;
+    private static unsafe nint RequestingPointer() => (nint)(delegate* unmanaged[Cdecl]<nint, int, byte*, void>)&RequestingCallback;
 
     [Fact]
     public async Task SetCallback_WaitsForRunningCallback()
@@ -103,5 +113,30 @@ public class NativeCallbackTests
         var b = Task.Run(() => _node.Inject(OptIn(2), "10.0.0.2", 60000));
         await Task.WhenAll(a, b).WaitAsync(Limit);
         Assert.Equal(2, Volatile.Read(ref _calls));
+    }
+
+    [Fact]
+    public async Task StopEndsAnEndlessRequestInsideACallback()
+    {
+        _calls = _freed = 0;
+        _node = new NativeNode(new NodeSettings
+        {
+            NodeName = "CBREQ", LocalAddress = System.Net.IPAddress.Loopback, BroadcastAddress = System.Net.IPAddress.Loopback,
+            ListenOnBroadcastPorts = false, AutoTimeSync = false,
+        });
+        _node.Start();
+        _node.SetCallback(1 << 4, RequestingPointer(), 0);
+        var ghost = new OptInPacket { NodeId = 8, NodeName = "GHOST", ListenerPort = 1 }.ToArray();
+        var inject = Task.Run(() => _node.Inject(ghost, "127.0.0.1", 1));
+        await Until(() => Volatile.Read(ref _calls) > 0);
+
+        // What tcnet_node_destroy does: stop (ending the request), then remove the callback.
+        await Task.Run(() =>
+        {
+            _node.Stop();
+            _node.SetCallback(0, 0, 0);
+        }).WaitAsync(Limit);
+        await inject.WaitAsync(Limit);
+        Assert.Equal(1, Volatile.Read(ref _freed));   // the request failed instead of waiting forever
     }
 }

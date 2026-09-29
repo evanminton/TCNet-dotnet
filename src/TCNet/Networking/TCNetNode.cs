@@ -80,6 +80,8 @@ public sealed class TCNetNode : IAsyncDisposable
     private CancellationTokenSource? _streamCts;
     private Task? _stream;
     private readonly object _streamGate = new();
+    /// <summary>Set inside a time stream (and the handlers it raises), which must not wait for a stream to end.</summary>
+    private readonly AsyncLocal<CancellationTokenSource?> _inStream = new();
     private int _electionRounds = -1;
     private bool _elected;
     private DateTime _electedAt;
@@ -206,6 +208,8 @@ public sealed class TCNetNode : IAsyncDisposable
             _requests.Clear();
             _syncs.Clear();
             _controls.Clear();
+            // An elected master was only master for this run: go back to Auto so the next run elects again.
+            if (_elected) ChangeRole(NodeType.Auto);
             _electionRounds = -1;
             _elected = false;
         }
@@ -764,24 +768,40 @@ public sealed class TCNetNode : IAsyncDisposable
     public void StartTimeStream(Func<TimePacket> source, TimeSpan interval)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        var cts = new CancellationTokenSource();
+        CancellationTokenSource? previousCts;
         lock (_streamGate)
         {
-            StopTimeStreamAsync().GetAwaiter().GetResult();
-            var cts = new CancellationTokenSource();
+            previousCts = _streamCts;
+            var previous = _stream;
             _streamCts = cts;
-            _stream = Task.Run(async () =>
-            {
-                using var timer = new PeriodicTimer(interval);
-                while (await Tick(timer, cts.Token).ConfigureAwait(false))
-                {
-                    try { await PublishTimeAsync(source(), cts.Token).ConfigureAwait(false); }
-                    catch (OperationCanceledException) { break; }
-                    catch (Exception ex) { Warn($"Time stream: {ex.Message}"); }
-                }
-            });
+            _stream = Task.Run(() => RunTimeStream(source, interval, cts, previous));
         }
+        if (previousCts is not null) CancelQuietly(previousCts);
     }
 
+    private async Task RunTimeStream(Func<TimePacket> source, TimeSpan interval, CancellationTokenSource cts, Task? previous)
+    {
+        _inStream.Value = cts;
+        try
+        {
+            // The stream this one replaces has been cancelled; let it finish so two streams never publish at once.
+            if (previous is not null) { try { await previous.ConfigureAwait(false); } catch { } }
+            using var timer = new PeriodicTimer(interval);
+            while (await Tick(timer, cts.Token).ConfigureAwait(false))
+            {
+                try { await PublishTimeAsync(source(), cts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) { Warn($"Time stream: {ex.Message}"); }
+            }
+        }
+        finally { cts.Dispose(); }
+    }
+
+    /// <summary>
+    /// Stops the time stream and waits until it has stopped. Called from inside a stream (a PacketSent or Warning
+    /// handler) it doesn't wait, since the stream can't end before that handler returns.
+    /// </summary>
     public async Task StopTimeStreamAsync()
     {
         CancellationTokenSource? cts;
@@ -794,9 +814,15 @@ public sealed class TCNetNode : IAsyncDisposable
             _stream = null;
         }
         if (cts is null) return;
-        cts.Cancel();
-        if (task is not null) { try { await task.ConfigureAwait(false); } catch { } }
-        cts.Dispose();
+        CancelQuietly(cts);
+        if (task is not null && _inStream.Value is null) { try { await task.ConfigureAwait(false); } catch { } }
+    }
+
+    /// <summary>Cancels a stream's token; the stream disposes it, possibly already (if it failed to start).</summary>
+    private static void CancelQuietly(CancellationTokenSource cts)
+    {
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     // ─────────────── round trips ───────────────
@@ -828,6 +854,7 @@ public sealed class TCNetNode : IAsyncDisposable
             var left = deadline - DateTime.UtcNow;
             return left > TimeSpan.Zero ? left : TimeSpan.Zero;
         }
+        var life = LifeToken();
 
         while (true)
         {
@@ -859,6 +886,8 @@ public sealed class TCNetNode : IAsyncDisposable
 
             try
             {
+                // Stopping the node ends every wait, even ones with no timeout (it cancels the answer).
+                using var stop = life.Register(static s => ((Pending<T>)s!).Tcs.TrySetCanceled(), p);
                 return (true, await p.Tcs.Task.WaitAsync(Remaining(), ct).ConfigureAwait(false));
             }
             catch (TimeoutException)
@@ -877,6 +906,13 @@ public sealed class TCNetNode : IAsyncDisposable
                 // The creator could not send; try again with our own request and the time we have left.
             }
         }
+    }
+
+    /// <summary>Cancelled when the node stops; already cancelled when it isn't running.</summary>
+    private CancellationToken LifeToken()
+    {
+        try { return _cts?.Token ?? new CancellationToken(true); }
+        catch (ObjectDisposedException) { return new CancellationToken(true); }
     }
 
     private static void Leave<T>(ConcurrentDictionary<string, Pending<T>> map, string key, Pending<T> p)

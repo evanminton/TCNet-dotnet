@@ -264,8 +264,9 @@ internal static unsafe class Exports
         {
             if (h.Target is NativeNode n)
             {
-                n.SetCallback(0, 0, 0);
-                n.Stop();
+                // Stop first: it ends round trips a callback may be blocked in, which SetCallback would wait for.
+                try { n.Stop(); }
+                finally { n.SetCallback(0, 0, 0); }
             }
         }
         catch (Exception ex) { Fail(ex); }

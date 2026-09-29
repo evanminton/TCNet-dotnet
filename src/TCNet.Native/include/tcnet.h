@@ -169,7 +169,10 @@ TCNET_API int         TCNET_CALL tcnet_node_set_type(tcnet_node* node, int node_
  * stream threads, and any thread calling a send, request, sync, control or inject function), so make it
  * thread-safe. tcnet_node_set_callback and tcnet_node_destroy wait until calls to the previous callback have
  * returned, so its user data may be freed right after they return. Called from inside a callback,
- * tcnet_node_set_callback doesn't wait (that could deadlock), so the previous callback may still be running. */
+ * tcnet_node_set_callback doesn't wait (that could deadlock), so the previous callback may still be running.
+ * Starting or stopping the time stream from a callback doesn't wait for the old stream to end either.
+ * Avoid requests, time syncs and controls inside a callback: an answer arriving on the port whose thread runs
+ * that callback can't be read until it returns, so the call times out. Stopping the node ends such a wait. */
 enum tcnet_event_kind {
     TCNET_EVENT_PACKET_RECEIVED = 1, TCNET_EVENT_PACKET_SENT = 2, TCNET_EVENT_INVALID_DATAGRAM = 3,
     TCNET_EVENT_NODE_DISCOVERED = 4, TCNET_EVENT_NODE_CHANGED = 5, TCNET_EVENT_NODE_LOST = 6,
