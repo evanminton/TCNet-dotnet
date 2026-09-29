@@ -253,6 +253,12 @@ internal static unsafe class Exports
     public static void NodeDestroy(void* handle)
     {
         if (handle == null) return;
+        if (NativeNode.InCallback)
+        {
+            // Stopping waits for the receive threads, one of which is running this callback: it would never return.
+            Fail(new InvalidOperationException("tcnet_node_destroy can't be called from inside an event callback."));
+            return;
+        }
         var h = GCHandle.FromIntPtr((nint)handle);
         try
         {
@@ -276,7 +282,12 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly(EntryPoint = "tcnet_node_stop", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeStop(void* handle)
     {
-        try { NodeOf(handle).Stop(); return 0; }
+        try
+        {
+            if (NativeNode.InCallback) throw new InvalidOperationException("tcnet_node_stop can't be called from inside an event callback.");
+            NodeOf(handle).Stop();
+            return 0;
+        }
         catch (Exception ex) { return Fail(ex); }
     }
 

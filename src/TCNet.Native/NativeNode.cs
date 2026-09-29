@@ -25,12 +25,23 @@ internal sealed unsafe class NativeNode
     /// <summary>Mask bit: packet events also carry every decoded field (slower; Time packets arrive every few ms).</summary>
     public const int WithFields = 1 << 16;
 
-    private sealed record Target(nint Function, nint User, int Mask);
+    /// <summary>A registered callback and how many calls to it are running (guarded by <see cref="_callGate"/>).</summary>
+    private sealed class Target(nint function, nint user, int mask)
+    {
+        public nint Function { get; } = function;
+        public nint User { get; } = user;
+        public int Mask { get; } = mask;
+        public int Calls;
+    }
 
     private volatile Target? _target;
     private readonly object _callGate = new();
-    private int _calls;
-    private readonly ThreadLocal<int> _depth = new();
+
+    /// <summary>How many callbacks (of any node) this thread is inside.</summary>
+    [ThreadStatic] private static int t_inCallback;
+
+    /// <summary>True on a thread that is running a C callback right now.</summary>
+    public static bool InCallback => t_inCallback > 0;
     private readonly object _timeGate = new();
     private TimeData _streamTime;
 
@@ -73,15 +84,18 @@ internal sealed unsafe class NativeNode
     public TCNetNode Node { get; }
 
     /// <summary>
-    /// Replaces the callback and waits until every call to the previous one has returned, so C code may free its
-    /// user data as soon as this returns. Called from inside the callback, it doesn't wait for that call itself.
+    /// Replaces the callback and waits until calls to the previous one have returned, so C code may free its user
+    /// data as soon as this returns. Called from inside any callback it doesn't wait (waiting there could deadlock):
+    /// the previous callback may then still be running on other threads.
     /// </summary>
     public void SetCallback(int mask, nint function, nint user)
     {
         lock (_callGate)
         {
+            var old = _target;
             _target = function == 0 ? null : new Target(function, user, mask);
-            while (_calls > _depth.Value) Monitor.Wait(_callGate);
+            if (old is null || InCallback) return;
+            while (old.Calls > 0) Monitor.Wait(_callGate);
         }
     }
 
@@ -127,9 +141,9 @@ internal sealed unsafe class NativeNode
             // Re-read under the lock: SetCallback may have just replaced or removed it.
             t = _target;
             if (t is null || (t.Mask & (1 << (int)kind)) == 0) return;
-            _calls++;
+            t.Calls++;
         }
-        _depth.Value++;
+        t_inCallback++;
         try
         {
             fixed (byte* p = json)
@@ -137,11 +151,10 @@ internal sealed unsafe class NativeNode
         }
         finally
         {
-            _depth.Value--;
+            t_inCallback--;
             lock (_callGate)
             {
-                _calls--;
-                Monitor.PulseAll(_callGate);
+                if (--t.Calls == 0) Monitor.PulseAll(_callGate);
             }
         }
     }

@@ -14,8 +14,8 @@
  *   - char* results: NULL on failure, with tcnet_last_error().
  *   - JSON is compact unless tcnet_set_json_indented(1). Every value comes with its meaning ("...Text" fields);
  *     packets carry "fields": [{offset, size, name, value, meaning}] in wire order.
- *   - Node calls block until done (start, stop, requests, time sync, control). Don't call tcnet_node_stop or
- *     tcnet_node_destroy from inside the event callback.
+ *   - Node calls block until done (start, stop, requests, time sync, control). tcnet_node_stop and
+ *     tcnet_node_destroy fail (see tcnet_last_error) when called from inside an event callback.
  */
 #ifndef TCNET_H
 #define TCNET_H
@@ -168,7 +168,8 @@ TCNET_API int         TCNET_CALL tcnet_node_set_type(tcnet_node* node, int node_
  * The callback can run on several threads at the same time (one per receive port, the housekeeping and time
  * stream threads, and any thread calling a send, request, sync, control or inject function), so make it
  * thread-safe. tcnet_node_set_callback and tcnet_node_destroy wait until calls to the previous callback have
- * returned, so its user data may be freed right after they return. */
+ * returned, so its user data may be freed right after they return. Called from inside a callback,
+ * tcnet_node_set_callback doesn't wait (that could deadlock), so the previous callback may still be running. */
 enum tcnet_event_kind {
     TCNET_EVENT_PACKET_RECEIVED = 1, TCNET_EVENT_PACKET_SENT = 2, TCNET_EVENT_INVALID_DATAGRAM = 3,
     TCNET_EVENT_NODE_DISCOVERED = 4, TCNET_EVENT_NODE_CHANGED = 5, TCNET_EVENT_NODE_LOST = 6,
