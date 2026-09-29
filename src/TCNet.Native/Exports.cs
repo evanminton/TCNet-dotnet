@@ -74,69 +74,69 @@ internal static unsafe class Exports
         return GCHandle.FromIntPtr((nint)handle).Target as NativeNode ?? throw new ObjectDisposedException("node");
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_free")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_free", CallConvs = [typeof(CallConvCdecl)])]
     public static void Free(void* p)
     {
         if (p != null) NativeMemory.Free(p);
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_last_error")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_last_error", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* LastError() => t_error == 0 ? s_empty : (byte*)t_error;
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_version")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_version", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* Version()
     {
         if (s_version == null) s_version = Alloc(Api.Version);
         return s_version;
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_sizeof_time")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_sizeof_time", CallConvs = [typeof(CallConvCdecl)])]
     public static int SizeOfTime() => sizeof(TimeData);
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_set_json_indented")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_set_json_indented", CallConvs = [typeof(CallConvCdecl)])]
     public static void SetJsonIndented(int on) => Json.Indented = on != 0;
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_set_strict")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_set_strict", CallConvs = [typeof(CallConvCdecl)])]
     public static void SetStrict(int on) => TCNetParser.Strict = on != 0;
 
     // ─────────────── packets ───────────────
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_is_tcnet")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_is_tcnet", CallConvs = [typeof(CallConvCdecl)])]
     public static int IsTCNet(byte* data, int length)
     {
         try { return TCNetParser.IsTCNet(Bytes(data, length)) ? 1 : 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_parse_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_parse_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* ParseJson(byte* data, int length)
     {
         try { return Alloc(Api.ParseJson(Bytes(data, length))); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_parse_text")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_parse_text", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* ParseText(byte* data, int length)
     {
         try { return Alloc(Api.ParseText(Bytes(data, length))); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_hexdump")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_hexdump", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* HexDump(byte* data, int length)
     {
         try { return Alloc(Wire.HexDump(Bytes(data, length))); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_packet_template")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_packet_template", CallConvs = [typeof(CallConvCdecl)])]
     public static int PacketTemplate(int messageType, int dataType, byte* buffer, int capacity)
     {
         try { return Copy(Api.Template(messageType, dataType), buffer, capacity); }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_time_encode")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_time_encode", CallConvs = [typeof(CallConvCdecl)])]
     public static int TimeEncode(TimeData* time, byte* buffer, int capacity)
     {
         try
@@ -147,7 +147,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_time_decode")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_time_decode", CallConvs = [typeof(CallConvCdecl)])]
     public static int TimeDecode(byte* data, int length, TimeData* result)
     {
         try
@@ -161,7 +161,7 @@ internal static unsafe class Exports
 
     // ─────────────── timecode ───────────────
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_timecode_from_ms")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_timecode_from_ms", CallConvs = [typeof(CallConvCdecl)])]
     public static int TimecodeFromMs(uint ms, int smpteMode, byte* hhmmssff)
     {
         try
@@ -177,7 +177,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_timecode_to_ms")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_timecode_to_ms", CallConvs = [typeof(CallConvCdecl)])]
     public static uint TimecodeToMs(byte* hhmmssff, int smpteMode)
     {
         try
@@ -188,44 +188,44 @@ internal static unsafe class Exports
         catch (Exception ex)
         {
             Fail(ex);
-            return 0;
+            return uint.MaxValue; // TCNET_TIMECODE_ERROR: never a valid time (timecodes stay below 24 h)
         }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_frame_rate")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_frame_rate", CallConvs = [typeof(CallConvCdecl)])]
     public static double FrameRate(int smpteMode) => Timecode.FrameRate((SmpteMode)(byte)smpteMode);
 
     // ─────────────── reference ───────────────
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_reference_markdown")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_reference_markdown", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* ReferenceMarkdown()
     {
         try { return Alloc(TCNet.Text.TCNetCatalog.ToMarkdown()); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_catalog_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_catalog_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* CatalogJson()
     {
         try { return Alloc(Api.CatalogJson()); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_search_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_search_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* SearchJson(byte* text)
     {
         try { return Alloc(Api.SearchJson(Need(text, "text"))); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_describe")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_describe", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* DescribeValue(byte* optionSet, long value)
     {
         try { return Alloc(Api.Describe(Need(optionSet, "option_set"), value)); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_interfaces_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_interfaces_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* InterfacesJson()
     {
         try { return Alloc(Api.InterfacesJson()); }
@@ -234,7 +234,7 @@ internal static unsafe class Exports
 
     // ─────────────── node ───────────────
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_create")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_create", CallConvs = [typeof(CallConvCdecl)])]
     public static void* NodeCreate(byte* settingsJson)
     {
         try
@@ -249,7 +249,7 @@ internal static unsafe class Exports
         }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_destroy")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_destroy", CallConvs = [typeof(CallConvCdecl)])]
     public static void NodeDestroy(void* handle)
     {
         if (handle == null) return;
@@ -266,49 +266,49 @@ internal static unsafe class Exports
         finally { h.Free(); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_start")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_start", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeStart(void* handle)
     {
         try { NodeOf(handle).Start(); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_stop")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_stop", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeStop(void* handle)
     {
         try { NodeOf(handle).Stop(); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_info_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_info_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* NodeInfoJson(void* handle)
     {
         try { return Alloc(NodeOf(handle).InfoJson()); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_set_type")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_set_type", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeSetType(void* handle, int nodeType)
     {
         try { NodeOf(handle).Node.SetNodeType((NodeType)checked((byte)nodeType)); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_set_callback")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_set_callback", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeSetCallback(void* handle, int mask, nint callback, void* user)
     {
         try { NodeOf(handle).SetCallback(mask, callback, (nint)user); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_nodes_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_nodes_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* NodeNodesJson(void* handle)
     {
         try { return Alloc(NodeOf(handle).NodesJson()); }
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_find_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_find_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* NodeFindJson(void* handle, byte* query)
     {
         try
@@ -321,7 +321,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_get_time")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_get_time", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeGetTime(void* handle, byte* query, TimeData* result)
     {
         try
@@ -335,7 +335,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_time_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_time_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* NodeTimeJson(void* handle, byte* query)
     {
         try
@@ -351,7 +351,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_publish_time")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_publish_time", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodePublishTime(void* handle, TimeData* time)
     {
         try
@@ -363,7 +363,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_set_stream_time")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_set_stream_time", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeSetStreamTime(void* handle, TimeData* time)
     {
         try
@@ -375,21 +375,21 @@ internal static unsafe class Exports
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_start_time_stream")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_start_time_stream", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeStartTimeStream(void* handle, int intervalMs)
     {
         try { NodeOf(handle).StartStream(intervalMs); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_stop_time_stream")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_stop_time_stream", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeStopTimeStream(void* handle)
     {
         try { NodeOf(handle).StopStream(); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_request_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_request_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* NodeRequestJson(void* handle, byte* query, int dataType, int layer, int timeoutMs)
     {
         try
@@ -400,7 +400,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_request_data")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_request_data", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeRequestData(void* handle, byte* query, int dataType, int layer, int timeoutMs, byte** data, int* length)
     {
         try
@@ -424,7 +424,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_time_sync_json")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_time_sync_json", CallConvs = [typeof(CallConvCdecl)])]
     public static byte* NodeTimeSyncJson(void* handle, byte* query, int rounds, int timeoutMs)
     {
         try
@@ -435,7 +435,7 @@ internal static unsafe class Exports
         catch (Exception ex) { return FailNull(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_control")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_control", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeSendControl(void* handle, byte* query, byte* path, int timeoutMs)
     {
         try
@@ -447,28 +447,28 @@ internal static unsafe class Exports
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_text")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_text", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeSendText(void* handle, byte* text, byte* query)
     {
         try { NodeOf(handle).SendText(Need(text, "text"), Str(query)); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_key")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_key", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeSendKey(void* handle, int code, byte* query)
     {
         try { NodeOf(handle).SendKey(code, Str(query)); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_raw")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_send_raw", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeSendRaw(void* handle, byte* data, int length, byte* ip, int port)
     {
         try { NodeOf(handle).SendRaw(Bytes(data, length).ToArray(), Need(ip, "ip"), port); return 0; }
         catch (Exception ex) { return Fail(ex); }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_inject")]
+    [UnmanagedCallersOnly(EntryPoint = "tcnet_node_inject", CallConvs = [typeof(CallConvCdecl)])]
     public static int NodeInject(void* handle, byte* data, int length, byte* ip, int port)
     {
         try { NodeOf(handle).Inject(Bytes(data, length), Need(ip, "ip"), port); return 0; }

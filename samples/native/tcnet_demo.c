@@ -22,7 +22,16 @@
 #endif
 
 static int failures = 0;
+/* The callback can run on several library threads at once, so the counter is updated atomically. */
+#ifdef _WIN32
+static volatile LONG events = 0;
+#  define EVENT_INC() InterlockedIncrement(&events)
+#  define EVENT_COUNT() InterlockedCompareExchange(&events, 0, 0)
+#else
 static int events = 0;
+#  define EVENT_INC() __atomic_add_fetch(&events, 1, __ATOMIC_SEQ_CST)
+#  define EVENT_COUNT() __atomic_load_n(&events, __ATOMIC_SEQ_CST)
+#endif
 
 #define CHECK(cond, what)                                                        \
     do {                                                                         \
@@ -33,7 +42,7 @@ static int events = 0;
 static void TCNET_CALL on_event(void* user, int kind, const char* json)
 {
     (void)user;
-    events++;
+    EVENT_INC();
     printf("      event %d: %.160s%s\n", kind, json, strlen(json) > 160 ? "..." : "");
 }
 
@@ -92,6 +101,7 @@ int main(int argc, char** argv)
         CHECK(tcnet_timecode_from_ms(3723040, TCNET_SMPTE_25, &tc) == 0 && tc.hours == 1 && tc.minutes == 2 && tc.seconds == 3 && tc.frames == 1,
               "3723040 ms @25 = 01:02:03:01");
         CHECK(tcnet_timecode_to_ms(&tc, TCNET_SMPTE_25) == 3723040, "and back to ms");
+        CHECK(tcnet_timecode_to_ms(NULL, TCNET_SMPTE_25) == TCNET_TIMECODE_ERROR, "timecode error value");
         CHECK(tcnet_frame_rate(TCNET_SMPTE_2997) > 29.97 && tcnet_frame_rate(TCNET_SMPTE_2997) < 29.98, "29.97 frame rate");
     }
 
@@ -131,7 +141,7 @@ int main(int argc, char** argv)
 
             n = tcnet_packet_template(TCNET_MSG_OPTIN, 0, buf, sizeof buf);
             CHECK(tcnet_node_inject(node, buf, n, "10.0.0.5", 60000) == 0, "inject Opt-IN from 10.0.0.5");
-            CHECK(events >= 1, "callback fired");
+            CHECK(EVENT_COUNT() >= 1, "callback fired");
             memset(&t, 0, sizeof t);
             t.smpte_mode = TCNET_SMPTE_25;
             t.flags = TCNET_TIME_AUTO_TIMECODE;

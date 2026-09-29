@@ -28,6 +28,9 @@ internal sealed unsafe class NativeNode
     private sealed record Target(nint Function, nint User, int Mask);
 
     private volatile Target? _target;
+    private readonly object _callGate = new();
+    private int _calls;
+    private readonly ThreadLocal<int> _depth = new();
     private readonly object _timeGate = new();
     private TimeData _streamTime;
 
@@ -69,8 +72,18 @@ internal sealed unsafe class NativeNode
 
     public TCNetNode Node { get; }
 
-    public void SetCallback(int mask, nint function, nint user) =>
-        _target = function == 0 ? null : new Target(function, user, mask);
+    /// <summary>
+    /// Replaces the callback and waits until every call to the previous one has returned, so C code may free its
+    /// user data as soon as this returns. Called from inside the callback, it doesn't wait for that call itself.
+    /// </summary>
+    public void SetCallback(int mask, nint function, nint user)
+    {
+        lock (_callGate)
+        {
+            _target = function == 0 ? null : new Target(function, user, mask);
+            while (_calls > _depth.Value) Monitor.Wait(_callGate);
+        }
+    }
 
     private void OnPacket(EventKind kind, PacketEventArgs e)
     {
@@ -109,8 +122,28 @@ internal sealed unsafe class NativeNode
             body(w);
             w.WriteEndObject();
         });
-        fixed (byte* p = json)
-            ((delegate* unmanaged[Cdecl]<nint, int, byte*, void>)(void*)t.Function)(t.User, (int)kind, p);
+        lock (_callGate)
+        {
+            // Re-read under the lock: SetCallback may have just replaced or removed it.
+            t = _target;
+            if (t is null || (t.Mask & (1 << (int)kind)) == 0) return;
+            _calls++;
+        }
+        _depth.Value++;
+        try
+        {
+            fixed (byte* p = json)
+                ((delegate* unmanaged[Cdecl]<nint, int, byte*, void>)(void*)t.Function)(t.User, (int)kind, p);
+        }
+        finally
+        {
+            _depth.Value--;
+            lock (_callGate)
+            {
+                _calls--;
+                Monitor.PulseAll(_callGate);
+            }
+        }
     }
 
     private static string Name(EventKind k) => k switch

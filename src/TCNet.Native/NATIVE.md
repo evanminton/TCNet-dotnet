@@ -79,5 +79,5 @@ dotnet publish src\TCNet.Native -c Release -r win-x64 -p:NativeLib=Static -o out
 ```
 
 NativeAOT only compiles for the OS it runs on. Build `linux-x64`/`linux-arm64` on Linux (with clang) and
-`osx-arm64`/`osx-x64` on macOS (with Xcode). That gives `TCNetNative.so` / `.a` and `TCNetNative.dylib` / `.a`
+`osx-arm64`/`osx-x64` on macOS (with Xcode). That gives `libTCNetNative.so` / `.a` and `libTCNetNative.dylib` / `.a`
 from the same source and header.

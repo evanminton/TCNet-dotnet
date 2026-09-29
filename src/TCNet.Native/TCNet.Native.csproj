@@ -19,6 +19,10 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
+  <!-- Linux and macOS convention: libTCNetNative.so / .dylib / .a, so -lTCNetNative and dlopen("libTCNetNative.so") work. -->
+  <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('linux')) Or $(RuntimeIdentifier.StartsWith('osx'))">
+    <TargetName>libTCNetNative</TargetName>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../TCNet/TCNet.csproj" />
     <InternalsVisibleTo Include="TCNet.Tests" />

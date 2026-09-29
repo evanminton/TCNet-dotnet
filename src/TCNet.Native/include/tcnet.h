@@ -3,7 +3,7 @@
  * No .NET runtime is needed on the target machine.
  *
  *   Shared: link TCNetNative.lib (Windows import library) and ship TCNetNative.dll;
- *           or libTCNetNative.so / TCNetNative.dylib on Linux / macOS.
+ *           or libTCNetNative.so / libTCNetNative.dylib on Linux / macOS (-lTCNetNative).
  *   Static: #define TCNET_STATIC, link TCNetNative.lib / .a plus the NativeAOT runtime libraries listed in
  *           runtime/link.rsp (Windows) or runtime/link.txt, and build with the static CRT (/MT).
  *
@@ -128,6 +128,8 @@ TCNET_API int   TCNET_CALL tcnet_time_decode(const uint8_t* data, int length, tc
 /* ───────────── timecode ───────────── */
 
 TCNET_API int      TCNET_CALL tcnet_timecode_from_ms(uint32_t ms, int smpte_mode, tcnet_timecode* out);
+/* Returns TCNET_TIMECODE_ERROR (never a valid time) on error; see tcnet_last_error. */
+#define TCNET_TIMECODE_ERROR 0xFFFFFFFFu
 TCNET_API uint32_t TCNET_CALL tcnet_timecode_to_ms(const tcnet_timecode* timecode, int smpte_mode);
 TCNET_API double   TCNET_CALL tcnet_frame_rate(int smpte_mode);  /* 29.97 → 30000/1001 */
 
@@ -151,7 +153,8 @@ typedef struct tcnet_node tcnet_node;
  *   listenOnBroadcastPorts, optInIntervalMs, nodeTimeoutMs, unicastOptIn, sendStatus (null = when master),
  *   answerTimeSync, autoTimeSync, timeSyncIntervalMs, autoRequestMetadata, autoRequestMetrics,
  *   autoMasterElection, receiveOwnPackets, requestTimeoutMs (-1 = forever).
- * tcnet_node_info_json returns the same names.
+ * tcnet_node_info_json returns them under "settings" (next to live state such as "running" and "sharedPorts");
+ * that "settings" object can be passed back to tcnet_node_create.
  */
 TCNET_API tcnet_node* TCNET_CALL tcnet_node_create(const char* settings_json);
 TCNET_API void        TCNET_CALL tcnet_node_destroy(tcnet_node* node);  /* stops it first */
@@ -160,9 +163,12 @@ TCNET_API int         TCNET_CALL tcnet_node_stop(tcnet_node* node);     /* sends
 TCNET_API char*       TCNET_CALL tcnet_node_info_json(tcnet_node* node);
 TCNET_API int         TCNET_CALL tcnet_node_set_type(tcnet_node* node, int node_type);
 
-/* Events: the callback runs on a library thread; json is {"event": name, "kind": n, ...} and is only valid
- * during the call. mask = OR of TCNET_EVENT_MASK(kind), plus TCNET_EVENT_WITH_FIELDS to get every field of
- * packets. callback NULL = off. */
+/* Events: json is {"event": name, "kind": n, ...} and is only valid during the call. mask = OR of
+ * TCNET_EVENT_MASK(kind), plus TCNET_EVENT_WITH_FIELDS to get every field of packets. callback NULL = off.
+ * The callback can run on several threads at the same time (one per receive port, the housekeeping and time
+ * stream threads, and any thread calling a send, request, sync, control or inject function), so make it
+ * thread-safe. tcnet_node_set_callback and tcnet_node_destroy wait until calls to the previous callback have
+ * returned, so its user data may be freed right after they return. */
 enum tcnet_event_kind {
     TCNET_EVENT_PACKET_RECEIVED = 1, TCNET_EVENT_PACKET_SENT = 2, TCNET_EVENT_INVALID_DATAGRAM = 3,
     TCNET_EVENT_NODE_DISCOVERED = 4, TCNET_EVENT_NODE_CHANGED = 5, TCNET_EVENT_NODE_LOST = 6,
